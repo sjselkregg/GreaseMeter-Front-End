@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { StyleSheet, View, TextInput, Keyboard, Platform } from "react-native";
+import { StyleSheet, View, TextInput, Keyboard, Platform, TouchableOpacity, Text } from "react-native";
 import MapView, { Region } from "react-native-maps";
 
 export default function MapScreen() {
@@ -33,6 +33,11 @@ export default function MapScreen() {
     }
   };
 
+  const handleAddLocation = () => {
+    // This is where you'll handle the "+" button press
+    console.log("Add location button pressed!");
+  };
+
   return (
     <View style={styles.container}>
       {/* Map */}
@@ -59,6 +64,11 @@ export default function MapScreen() {
           returnKeyType="search"
         />
       </View>
+
+      {/* Floating + Button */}
+      <TouchableOpacity style={styles.addButton} onPress={handleAddLocation}>
+        <Text style={styles.addButtonText}>+</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -72,7 +82,7 @@ const styles = StyleSheet.create({
   },
   searchWrapper: {
     position: "absolute",
-    top: Platform.OS === "ios" ? 10 : 5, // below the header
+    top: Platform.OS === "ios" ? 10 : 5,
     left: 10,
     right: 10,
     zIndex: 10,
@@ -88,5 +98,26 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
+  },
+  addButton: {
+    position: "absolute",
+    bottom: 30,
+    right: 20,
+    backgroundColor: "orange",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  addButtonText: {
+    color: "#fff",
+    fontSize: 36,
+    fontWeight: "bold",
   },
 });
