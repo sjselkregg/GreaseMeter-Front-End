@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "GreaseMeter",
+    "slug": "greasemeter",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/gripSplash.png",
+    "scheme": "greasemeter",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/gripSplash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "black"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/gripSplash.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/gripSplash.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
