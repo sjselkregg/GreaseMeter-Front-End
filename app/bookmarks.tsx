@@ -12,7 +12,7 @@ export default function Bookmarks() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch bookmarks
+  //Fetch bookmarks
   const fetchBookmarks = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -41,7 +41,7 @@ export default function Bookmarks() {
     }
   }, []);
 
-  // Delete bookmark
+  //Delete bookmark
   const handleDeleteBookmark = async (bookmarkId: number) => {
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -68,7 +68,7 @@ export default function Bookmarks() {
         return;
       }
 
-      // Refresh list after deletion
+      //Refresh list after deletion
       setBookmarks((prev) => prev.filter((b) => b.id !== bookmarkId));
       Alert.alert("Success", "Bookmark deleted.");
     } catch (err) {
@@ -77,7 +77,7 @@ export default function Bookmarks() {
     }
   };
 
-  // Pull-to-refresh
+  //Pull-to-refresh
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchBookmarks();

@@ -179,7 +179,7 @@ export default function MapScreen() {
     });
   };
 
-  // ✅ Add Bookmark functionality
+  //Add Bookmark functionality
   const handleAddBookmark = async () => {
     if (!selectedPlace) return;
     try {

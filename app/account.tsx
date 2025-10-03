@@ -15,7 +15,7 @@ export default function Account() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  // API base
+  //API base
   const API_BASE = "https://api.greasemeter.live/v1";
 
   // --- SIGN UP ---
@@ -75,7 +75,7 @@ export default function Account() {
     }
   };
 
-  // --- LOGIN ---
+  //LOGIN
   const handleLogin = async () => {
     const trimmedName = username.trim();
     const trimmedPassword = password.trim();
@@ -118,7 +118,7 @@ export default function Account() {
     }
   };
 
-  // --- LOGOUT ---
+  //LOGOUT
   const handleLogout = async () => {
     await AsyncStorage.removeItem("userToken");
     setLoggedInUser(null);
