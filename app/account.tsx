@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type User = {
   name: string;
@@ -14,9 +15,10 @@ export default function Account() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  const API_BASE = "https://api.greasemeter.live/api/v1";
+  // API base
+  const API_BASE = "https://api.greasemeter.live/v1";
 
-  //SIGN UP
+  // --- SIGN UP ---
   const handleSignUp = async () => {
     const trimmedEmail = email.trim();
     const trimmedName = username.trim();
@@ -58,6 +60,9 @@ export default function Account() {
 
       const data = await res.json();
       console.log("✅ SignUp success response:", data);
+
+      await AsyncStorage.setItem("userToken", data.token);
+
       setLoggedInUser({ name: data.name || trimmedName, email: data.email, token: data.token });
       setEmail("");
       setUsername("");
@@ -99,6 +104,9 @@ export default function Account() {
 
       const data = await res.json();
       console.log("✅ Login success response:", data);
+
+      await AsyncStorage.setItem("userToken", data.token);
+
       setLoggedInUser({ name: data.name, email: data.email, token: data.token });
       setUsername("");
       setPassword("");
@@ -110,8 +118,9 @@ export default function Account() {
     }
   };
 
-  //LOGOUT
-  const handleLogout = () => {
+  // --- LOGOUT ---
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem("userToken");
     setLoggedInUser(null);
   };
 

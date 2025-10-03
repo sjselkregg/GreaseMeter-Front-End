@@ -12,8 +12,11 @@ import {
   Dimensions,
   PanResponder,
   TouchableWithoutFeedback,
+  Alert,
+  Modal,
 } from "react-native";
 import MapView, { Marker, Region } from "react-native-maps";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type Place = {
   id: number;
@@ -24,7 +27,7 @@ type Place = {
 };
 
 type Review = {
-  id: number;
+  id: number | string;
   text: string;
   rating: number;
 };
@@ -35,10 +38,12 @@ export default function MapScreen() {
   const [places, setPlaces] = useState<Place[]>([]);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewText, setReviewText] = useState("");
+  const [reviewRating, setReviewRating] = useState("5");
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   const screenHeight = Dimensions.get("window").height;
 
-  //Snap positions
   const SNAP_POINTS = {
     CLOSED: screenHeight,
     HALF: screenHeight * 0.5,
@@ -47,7 +52,6 @@ export default function MapScreen() {
 
   const slideAnim = useRef(new Animated.Value(SNAP_POINTS.CLOSED)).current;
 
-  //PanResponder for drag gestures
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 5,
@@ -59,15 +63,9 @@ export default function MapScreen() {
       },
       onPanResponderRelease: (_, gesture) => {
         let newPos = SNAP_POINTS.HALF;
-
-        if (gesture.dy > 100) {
-          // Swipe down → close
-          newPos = SNAP_POINTS.CLOSED;
-        } else if (gesture.dy < -100) {
-          // Swipe up → full
-          newPos = SNAP_POINTS.FULL;
-        } else {
-          // Snap to nearest point
+        if (gesture.dy > 100) newPos = SNAP_POINTS.CLOSED;
+        else if (gesture.dy < -100) newPos = SNAP_POINTS.FULL;
+        else {
           const current = slideAnim.__getValue();
           const distances = [
             { pos: SNAP_POINTS.FULL, dist: Math.abs(current - SNAP_POINTS.FULL) },
@@ -91,16 +89,13 @@ export default function MapScreen() {
     })
   ).current;
 
-  //Fetch cheesesteak places
   useEffect(() => {
     const fetchPlaces = async () => {
       try {
         const response = await fetch(
-          "https://api.greasemeter.live/api/v1/places?lat=39.95&lng=-75.165&latDelta=0.1&lngDelta=0.1"
+          "https://api.greasemeter.live/v1/places?lat=39.95&lng=-75.165&latDelta=0.1&lngDelta=0.1"
         );
         const data = await response.json();
-        console.log("Places API response:", data);
-
         setPlaces(
           data.map((p: any) => ({
             id: p.id,
@@ -114,21 +109,40 @@ export default function MapScreen() {
         console.error("Failed to fetch places:", err);
       }
     };
-
     fetchPlaces();
   }, []);
 
-  const handleSearch = async () => {
-    if (!search.trim()) return;
-
+  const fetchReviews = async (placeId: number) => {
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          search
-        )}`
+        `https://api.greasemeter.live/v1/places/${placeId}/reviews?page=1&limit=20`
+      );
+      if (!response.ok) {
+        console.log("Fetch reviews failed:", await response.text());
+        setReviews([]);
+        return;
+      }
+      const data = await response.json();
+      const reviewsArray = data.items ?? data;
+      const mapped = reviewsArray.map((r: any, idx: number) => ({
+        id: r.id ?? r.review_id ?? idx,
+        text: r.text ?? r.comment ?? "",
+        rating: r.rating ?? r.stars ?? 0,
+      }));
+      setReviews(mapped);
+    } catch (err) {
+      console.error("Error fetching reviews:", err);
+      setReviews([]);
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!search.trim()) return;
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(search)}`
       );
       const data = await response.json();
-
       if (data && data.length > 0) {
         const { lat, lon } = data[0];
         const region: Region = {
@@ -147,16 +161,7 @@ export default function MapScreen() {
 
   const openPlaceDetails = async (place: Place) => {
     setSelectedPlace(place);
-
-    try {
-      const response = await fetch(
-        `https://api.greasemeter.live/api/v1/places/${place.id}/reviews`
-      );
-      const data = await response.json();
-      setReviews(data);
-    } catch {
-      setReviews([]);
-    }
+    await fetchReviews(place.id);
 
     Animated.spring(slideAnim, {
       toValue: SNAP_POINTS.HALF,
@@ -174,13 +179,84 @@ export default function MapScreen() {
     });
   };
 
-  //Placeholder button handlers
-  const handleAddBookmark = () => {
-    console.log("Add Bookmark pressed for place:", selectedPlace?.id);
+  // ✅ Add Bookmark functionality
+  const handleAddBookmark = async () => {
+    if (!selectedPlace) return;
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      if (!token) {
+        Alert.alert("Error", "You must be logged in to add a bookmark.");
+        return;
+      }
+
+      const res = await fetch(
+        `https://api.greasemeter.live/v1/places/${selectedPlace.id}/bookmarks`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.log("Bookmark error:", errText);
+        Alert.alert("Error", "Failed to add bookmark.");
+        return;
+      }
+
+      Alert.alert("Success", `${selectedPlace.name} has been bookmarked!`);
+    } catch (err) {
+      console.error("Bookmark error:", err);
+      Alert.alert("Error", "Could not add bookmark.");
+    }
   };
 
-  const handleAddReview = () => {
-    console.log("Add Review pressed for place:", selectedPlace?.id);
+  const handleAddReview = () => setShowReviewModal(true);
+
+  const submitReview = async () => {
+    if (!reviewText.trim() || !selectedPlace) {
+      Alert.alert("Error", "Please enter review text and rating.");
+      return;
+    }
+
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      if (!token) {
+        Alert.alert("Error", "You must be logged in to post a review.");
+        return;
+      }
+
+      const payload = { rating: parseInt(reviewRating), text: reviewText.trim() };
+      const res = await fetch(
+        `https://api.greasemeter.live/v1/places/${selectedPlace.id}/reviews`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.log("Review error:", errText);
+        Alert.alert("Error", "Failed to post review.");
+        return;
+      }
+
+      await fetchReviews(selectedPlace.id);
+      setReviewText("");
+      setReviewRating("5");
+      setShowReviewModal(false);
+    } catch (err) {
+      console.error("Network error:", err);
+      Alert.alert("Error", "Could not submit review.");
+    }
   };
 
   return (
@@ -199,10 +275,7 @@ export default function MapScreen() {
         {places.map((place) => (
           <Marker
             key={place.id}
-            coordinate={{
-              latitude: place.latitude,
-              longitude: place.longitude,
-            }}
+            coordinate={{ latitude: place.latitude, longitude: place.longitude }}
             title={place.name}
             onPress={() => openPlaceDetails(place)}
           />
@@ -222,7 +295,6 @@ export default function MapScreen() {
         />
       </View>
 
-      {/* Overlay for closing on outside tap */}
       {selectedPlace && (
         <TouchableWithoutFeedback onPress={closeDetails}>
           <View style={styles.overlay} />
@@ -230,10 +302,7 @@ export default function MapScreen() {
       )}
 
       {/* Bottom sheet */}
-      <Animated.View
-        style={[styles.bottomSheet, { top: slideAnim }]}
-        {...panResponder.panHandlers}
-      >
+      <Animated.View style={[styles.bottomSheet, { top: slideAnim }]} {...panResponder.panHandlers}>
         {selectedPlace && (
           <View style={styles.sheetContent}>
             <Text style={styles.placeTitle}>{selectedPlace.name}</Text>
@@ -242,34 +311,60 @@ export default function MapScreen() {
             <Text style={styles.sectionTitle}>Reviews</Text>
             <FlatList
               data={reviews}
-              keyExtractor={(item) => item.id.toString()}
+              keyExtractor={(item, index) => item.id?.toString() ?? index.toString()}
               renderItem={({ item }) => (
                 <View style={styles.review}>
-                  <Text style={styles.reviewText}>
-                    ⭐ {item.rating} - {item.text}
-                  </Text>
+                  <Text style={styles.reviewText}>⭐ {item.rating} - {item.text}</Text>
                 </View>
               )}
               ListEmptyComponent={<Text>No reviews yet</Text>}
             />
 
             <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleAddBookmark}
-              >
+              <TouchableOpacity style={styles.actionButton} onPress={handleAddBookmark}>
                 <Text style={styles.buttonText}>Add Bookmark</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleAddReview}
-              >
+              <TouchableOpacity style={styles.actionButton} onPress={handleAddReview}>
                 <Text style={styles.buttonText}>Add Review</Text>
               </TouchableOpacity>
             </View>
           </View>
         )}
       </Animated.View>
+
+      {/* Review Modal */}
+      <Modal visible={showReviewModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.sectionTitle}>Write a Review</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Your review..."
+              value={reviewText}
+              onChangeText={setReviewText}
+              multiline
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Rating (1-5)"
+              keyboardType="numeric"
+              value={reviewRating}
+              onChangeText={setReviewRating}
+            />
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: "#555" }]}
+                onPress={() => setShowReviewModal(false)}
+              >
+                <Text style={styles.buttonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionButton} onPress={submitReview}>
+                <Text style={styles.buttonText}>Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -292,10 +387,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     elevation: 3,
   },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.3)",
-  },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.3)" },
   bottomSheet: {
     position: "absolute",
     left: 0,
@@ -316,16 +408,29 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 16, fontWeight: "bold", marginTop: 10 },
   review: { paddingVertical: 4 },
   reviewText: { fontSize: 14 },
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: 16,
-  },
+  buttonRow: { flexDirection: "row", justifyContent: "space-around", marginTop: 16 },
   actionButton: {
     backgroundColor: "orange",
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
+    marginTop: 10,
   },
-  buttonText: { color: "#fff", fontWeight: "bold" },
+  buttonText: { color: "#fff", fontWeight: "bold", textAlign: "center" },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 8,
+    backgroundColor: "#fff",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalContent: { width: "100%", backgroundColor: "#fff", borderRadius: 12, padding: 20 },
 });
