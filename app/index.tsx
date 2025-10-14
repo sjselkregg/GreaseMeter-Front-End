@@ -15,11 +15,11 @@ import {
   Alert,
   Modal,
 } from "react-native";
-import MapView, { Marker, Region } from "react-native-maps";
+import MapView, { Marker } from "react-native-maps";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type Place = {
-  id: number;
+  id: number | string;
   name: string;
   latitude: number;
   longitude: number;
@@ -43,28 +43,20 @@ export default function MapScreen() {
   const [showReviewModal, setShowReviewModal] = useState(false);
 
   const screenHeight = Dimensions.get("window").height;
-
-  const SNAP_POINTS = {
-    CLOSED: screenHeight,
-    HALF: screenHeight * 0.5,
-    FULL: screenHeight * 0.1,
-  };
-
+  const SNAP_POINTS = { CLOSED: screenHeight, HALF: screenHeight * 0.5, FULL: screenHeight * 0.1 };
   const slideAnim = useRef(new Animated.Value(SNAP_POINTS.CLOSED)).current;
 
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 5,
-      onPanResponderMove: (_, gesture) => {
-        const newPos = slideAnim.__getValue() + gesture.dy;
-        if (newPos >= SNAP_POINTS.FULL && newPos <= SNAP_POINTS.CLOSED) {
-          slideAnim.setValue(newPos);
-        }
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 5,
+      onPanResponderMove: (_, g) => {
+        const newPos = slideAnim.__getValue() + g.dy;
+        if (newPos >= SNAP_POINTS.FULL && newPos <= SNAP_POINTS.CLOSED) slideAnim.setValue(newPos);
       },
-      onPanResponderRelease: (_, gesture) => {
+      onPanResponderRelease: (_, g) => {
         let newPos = SNAP_POINTS.HALF;
-        if (gesture.dy > 100) newPos = SNAP_POINTS.CLOSED;
-        else if (gesture.dy < -100) newPos = SNAP_POINTS.FULL;
+        if (g.dy > 100) newPos = SNAP_POINTS.CLOSED;
+        else if (g.dy < -100) newPos = SNAP_POINTS.FULL;
         else {
           const current = slideAnim.__getValue();
           const distances = [
@@ -75,11 +67,7 @@ export default function MapScreen() {
           distances.sort((a, b) => a.dist - b.dist);
           newPos = distances[0].pos;
         }
-
-        Animated.spring(slideAnim, {
-          toValue: newPos,
-          useNativeDriver: false,
-        }).start(() => {
+        Animated.spring(slideAnim, { toValue: newPos, useNativeDriver: false }).start(() => {
           if (newPos === SNAP_POINTS.CLOSED) {
             setSelectedPlace(null);
             setReviews([]);
@@ -89,6 +77,7 @@ export default function MapScreen() {
     })
   ).current;
 
+  //get places for map
   useEffect(() => {
     const fetchPlaces = async () => {
       try {
@@ -96,22 +85,44 @@ export default function MapScreen() {
           "https://api.greasemeter.live/v1/places?lat=39.95&lng=-75.165&latDelta=0.1&lngDelta=0.1"
         );
         const data = await response.json();
-        setPlaces(
-          data.map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            latitude: p.point?.coordinates?.[1] ?? 0,
-            longitude: p.point?.coordinates?.[0] ?? 0,
-            address: p.address ?? "",
-          }))
-        );
+        console.log("📍 Raw places response:", JSON.stringify(data, null, 2));
+
+        const items = Array.isArray(data) ? data : data.items ?? [];
+
+        const mapped = items
+          .map((p: any) => {
+            const coords =
+              p.point?.coordinates ??
+              p.geometry?.coordinates ??
+              [p.lng ?? p.longitude, p.lat ?? p.latitude];
+
+            const lon = parseFloat(coords?.[0]);
+            const lat = parseFloat(coords?.[1]);
+
+            if (isNaN(lat) || isNaN(lon)) return null;
+
+            return {
+              id: p.id ?? p.place_id,
+              name: p.name ?? "Unnamed Place",
+              latitude: lat,
+              longitude: lon,
+              address: p.address ?? "",
+            };
+          })
+          .filter(Boolean);
+
+        setPlaces(mapped);
+        console.log(`✅ Loaded ${mapped.length} places`);
       } catch (err) {
         console.error("Failed to fetch places:", err);
+        setPlaces([]);
       }
     };
+
     fetchPlaces();
   }, []);
 
+  //get reviews for a place
   const fetchReviews = async (placeId: number) => {
     try {
       const response = await fetch(
@@ -136,6 +147,7 @@ export default function MapScreen() {
     }
   };
 
+  //search in map  *NEEDS UPDATING WHEN SERVER IS UPDATED
   const handleSearch = async () => {
     if (!search.trim()) return;
     try {
@@ -145,13 +157,10 @@ export default function MapScreen() {
       const data = await response.json();
       if (data && data.length > 0) {
         const { lat, lon } = data[0];
-        const region: Region = {
-          latitude: parseFloat(lat),
-          longitude: parseFloat(lon),
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        };
-        mapRef.current?.animateToRegion(region, 1000);
+        mapRef.current?.animateToRegion(
+          { latitude: parseFloat(lat), longitude: parseFloat(lon), latitudeDelta: 0.05, longitudeDelta: 0.05 },
+          1000
+        );
         Keyboard.dismiss();
       }
     } catch (err) {
@@ -159,27 +168,22 @@ export default function MapScreen() {
     }
   };
 
+  //open place info
   const openPlaceDetails = async (place: Place) => {
     setSelectedPlace(place);
-    await fetchReviews(place.id);
-
-    Animated.spring(slideAnim, {
-      toValue: SNAP_POINTS.HALF,
-      useNativeDriver: false,
-    }).start();
+    await fetchReviews(place.id as number);
+    Animated.spring(slideAnim, { toValue: SNAP_POINTS.HALF, useNativeDriver: false }).start();
   };
 
+  //close place info
   const closeDetails = () => {
-    Animated.spring(slideAnim, {
-      toValue: SNAP_POINTS.CLOSED,
-      useNativeDriver: false,
-    }).start(() => {
+    Animated.spring(slideAnim, { toValue: SNAP_POINTS.CLOSED, useNativeDriver: false }).start(() => {
       setSelectedPlace(null);
       setReviews([]);
     });
   };
 
-  //Add Bookmark functionality
+  //add a bookmark
   const handleAddBookmark = async () => {
     if (!selectedPlace) return;
     try {
@@ -216,6 +220,7 @@ export default function MapScreen() {
 
   const handleAddReview = () => setShowReviewModal(true);
 
+  //submit review
   const submitReview = async () => {
     if (!reviewText.trim() || !selectedPlace) {
       Alert.alert("Error", "Please enter review text and rating.");
@@ -249,7 +254,7 @@ export default function MapScreen() {
         return;
       }
 
-      await fetchReviews(selectedPlace.id);
+      await fetchReviews(selectedPlace.id as number);
       setReviewText("");
       setReviewRating("5");
       setShowReviewModal(false);
@@ -259,17 +264,17 @@ export default function MapScreen() {
     }
   };
 
+  //index interface
   return (
     <View style={styles.container}>
-      {/* Map */}
       <MapView
         ref={mapRef}
         style={styles.map}
         initialRegion={{
           latitude: 39.9526,
           longitude: -75.1652,
-          latitudeDelta: 0.1,
-          longitudeDelta: 0.1,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
         }}
       >
         {places.map((place) => (
@@ -282,7 +287,6 @@ export default function MapScreen() {
         ))}
       </MapView>
 
-      {/* Search bar */}
       <View style={styles.searchWrapper}>
         <TextInput
           style={styles.searchBar}
@@ -301,7 +305,6 @@ export default function MapScreen() {
         </TouchableWithoutFeedback>
       )}
 
-      {/* Bottom sheet */}
       <Animated.View style={[styles.bottomSheet, { top: slideAnim }]} {...panResponder.panHandlers}>
         {selectedPlace && (
           <View style={styles.sheetContent}>
@@ -332,7 +335,6 @@ export default function MapScreen() {
         )}
       </Animated.View>
 
-      {/* Review Modal */}
       <Modal visible={showReviewModal} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -369,24 +371,12 @@ export default function MapScreen() {
   );
 }
 
+//styles
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
-  searchWrapper: {
-    position: "absolute",
-    top: Platform.OS === "ios" ? 10 : 5,
-    left: 10,
-    right: 10,
-    zIndex: 10,
-  },
-  searchBar: {
-    backgroundColor: "#fff",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    elevation: 3,
-  },
+  searchWrapper: { position: "absolute", top: Platform.OS === "ios" ? 10 : 5, left: 10, right: 10, zIndex: 10 },
+  searchBar: { backgroundColor: "#fff", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, fontSize: 16, elevation: 3 },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.3)" },
   bottomSheet: {
     position: "absolute",
@@ -409,28 +399,9 @@ const styles = StyleSheet.create({
   review: { paddingVertical: 4 },
   reviewText: { fontSize: 14 },
   buttonRow: { flexDirection: "row", justifyContent: "space-around", marginTop: 16 },
-  actionButton: {
-    backgroundColor: "orange",
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    marginTop: 10,
-  },
+  actionButton: { backgroundColor: "orange", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, marginTop: 10 },
   buttonText: { color: "#fff", fontWeight: "bold", textAlign: "center" },
-  input: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    padding: 8,
-    marginBottom: 8,
-    backgroundColor: "#fff",
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
+  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 8, marginBottom: 8, backgroundColor: "#fff" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 20 },
   modalContent: { width: "100%", backgroundColor: "#fff", borderRadius: 12, padding: 20 },
 });

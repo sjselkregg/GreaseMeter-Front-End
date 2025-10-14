@@ -18,7 +18,7 @@ export default function Layout() {
       }}
     >
       <Tabs.Screen
-        name="bookmarks"       // must match bookmarks.tsx
+        name="bookmarks"       
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="bookmark-outline" size={size} color={color} />
@@ -26,7 +26,7 @@ export default function Layout() {
         }}
       />
       <Tabs.Screen
-        name="index"           // must match index.tsx (Map)
+        name="index"           
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="map-outline" size={size} color={color} />
@@ -34,7 +34,7 @@ export default function Layout() {
         }}
       />
       <Tabs.Screen
-        name="account"        // must match account.tsx
+        name="account"       
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person-outline" size={size} color={color} />

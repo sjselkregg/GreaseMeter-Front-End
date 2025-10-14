@@ -1,5 +1,15 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+} from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type User = {
@@ -8,17 +18,37 @@ type User = {
   token: string;
 };
 
+type Review = {
+  id: number | string;
+  text: string;
+  rating: number;
+  place_name?: string;
+};
+
 export default function Account() {
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null);
   const [mode, setMode] = useState<"default" | "signup" | "login">("default");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [showReviews, setShowReviews] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  //API base
   const API_BASE = "https://api.greasemeter.live/v1";
 
-  // --- SIGN UP ---
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await AsyncStorage.getItem("userToken");
+        if (token) setLoggedInUser({ name: "User", email: "", token });
+      } catch (err) {
+        console.error("Error loading saved user:", err);
+      }
+    })();
+  }, []);
+
+  //Sign up
   const handleSignUp = async () => {
     const trimmedEmail = email.trim();
     const trimmedName = username.trim();
@@ -32,137 +62,260 @@ export default function Account() {
       Alert.alert("Sign Up Error", "Please enter a valid email address.");
       return;
     }
-    if (trimmedName.length < 3) {
-      Alert.alert("Sign Up Error", "Username must be at least 3 characters long.");
-      return;
-    }
     if (trimmedPassword.length < 8) {
-      Alert.alert("Sign Up Error", "Password must be at least 8 characters long.");
+      Alert.alert("Sign Up Error", "Password must be at least 8 characters.");
       return;
     }
 
     try {
-      const payload = { email: trimmedEmail, name: trimmedName, password: trimmedPassword };
-      console.log("📤 Sending signup payload:", payload);
-
       const res = await fetch(`${API_BASE}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          email: trimmedEmail,
+          name: trimmedName,
+          password: trimmedPassword,
+        }),
       });
 
+      const text = await res.text();
       if (!res.ok) {
-        const text = await res.text();
-        console.log("🔴 SignUp error raw response:", text);
-        Alert.alert("Sign Up Failed", "Something went wrong. Please try again.");
+        console.log("SignUp error:", text);
+        let message = "Sign-up failed.";
+        try {
+          const err = JSON.parse(text);
+          message = err.error || err.message || message;
+        } catch {}
+        Alert.alert("Error", message);
         return;
       }
 
-      const data = await res.json();
-      console.log("✅ SignUp success response:", data);
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        console.log("Signup response not JSON:", text);
+      }
+
+      if (!data.token) {
+        Alert.alert(
+          "Account Created",
+          "Your account was created successfully! Please log in to continue."
+      );
+        setMode("login");
+        return;
+      }
 
       await AsyncStorage.setItem("userToken", data.token);
-
-      setLoggedInUser({ name: data.name || trimmedName, email: data.email, token: data.token });
-      setEmail("");
-      setUsername("");
-      setPassword("");
+      setLoggedInUser({ name: data.name || trimmedName, email: data.email || trimmedEmail, token: data.token });
       setMode("default");
-      Alert.alert("Sign Up Success", "Your account has been created!");
+      Alert.alert("Success", "Account created successfully!");
     } catch (err) {
-      console.error("Network error:", err);
-      Alert.alert("Error", "Cannot reach server. Check your connection.");
+      console.error("Signup error:", err);
+      Alert.alert("Error", "Could not connect to server.");
     }
   };
 
-  //LOGIN
+  //login
   const handleLogin = async () => {
     const trimmedName = username.trim();
     const trimmedPassword = password.trim();
-
     if (!trimmedName || !trimmedPassword) {
-      Alert.alert("Login Error", "Please enter both username and password.");
+      Alert.alert("Login Error", "Enter both username and password.");
       return;
     }
 
     try {
-      const payload = { name: trimmedName, password: trimmedPassword };
-      console.log("📤 Sending login payload:", payload);
-
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ name: trimmedName, password: trimmedPassword }),
       });
 
+      const text = await res.text();
       if (!res.ok) {
-        const text = await res.text();
-        console.log("🔴 Login error raw response:", text);
-        Alert.alert("Login Failed", text);
+        console.log("Login error:", text);
+        let message = "Login failed.";
+        try {
+          const err = JSON.parse(text);
+          message = err.error || err.message || message;
+        } catch {}
+        Alert.alert("Error", message);
         return;
       }
 
-      const data = await res.json();
-      console.log("✅ Login success response:", data);
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        console.log("Login response not JSON:", text);
+      }
+
+      if (!data.token) {
+        Alert.alert("Error", "No token received from server.");
+        return;
+      }
 
       await AsyncStorage.setItem("userToken", data.token);
-
-      setLoggedInUser({ name: data.name, email: data.email, token: data.token });
-      setUsername("");
-      setPassword("");
+      setLoggedInUser({ name: data.name || trimmedName, email: data.email || "", token: data.token });
       setMode("default");
-      Alert.alert("Login Success", `Welcome back, ${data.name}!`);
+      Alert.alert("Success", `Welcome back, ${data.name || trimmedName}!`);
     } catch (err) {
-      console.error("Network error:", err);
-      Alert.alert("Error", "Cannot reach server. Check your connection.");
+      console.error("Login error:", err);
+      Alert.alert("Error", "Could not connect to server.");
     }
   };
 
-  //LOGOUT
+  //logout
   const handleLogout = async () => {
-    await AsyncStorage.removeItem("userToken");
-    setLoggedInUser(null);
+    try {
+      await AsyncStorage.removeItem("userToken");
+      setLoggedInUser(null);
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
   };
 
+  //get my reviews
+  const fetchUserReviews = useCallback(async (page = 1) => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      if (!token) {
+        Alert.alert("Error", "You must be logged in to view reviews.");
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/my/reviews?page=${page}&limit=50`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const text = await res.text();
+      if (!res.ok) {
+        console.log("Review fetch error:", text);
+        let message = "Failed to load reviews.";
+        try {
+          const err = JSON.parse(text);
+          message = err.error || err.message || message;
+        } catch {}
+        Alert.alert("Error", message);
+        return;
+      }
+
+      const data = text ? JSON.parse(text) : {};
+      const items = Array.isArray(data) ? data : data.items ?? [];
+      setReviews(items);
+    } catch (err) {
+      console.error("Error fetching reviews:", err);
+      Alert.alert("Error", "Network issue while fetching reviews.");
+    }
+  }, []);
+
+  //refresh reviews
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchUserReviews();
+    setRefreshing(false);
+  };
+
+  //delete account
+  const handleDeleteAccount = async () => {
+    Alert.alert("Confirm Deletion", "Are you sure you want to delete your account?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            const token = await AsyncStorage.getItem("userToken");
+            if (!token) return;
+            const res = await fetch(`${API_BASE}/my/account`, {
+              method: "DELETE",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+            });
+
+            const text = await res.text();
+            if (!res.ok) {
+              console.log("Delete account error:", text);
+              let message = "Failed to delete account.";
+              try {
+                const err = JSON.parse(text);
+                message = err.error || err.message || message;
+              } catch {}
+              Alert.alert("Error", message);
+              return;
+            }
+
+            await AsyncStorage.removeItem("userToken");
+            setLoggedInUser(null);
+            Alert.alert("Account Deleted", "Your account has been removed.");
+          } catch (err) {
+            console.error("Delete account error:", err);
+            Alert.alert("Error", "Network issue while deleting account.");
+          }
+        },
+      },
+    ]);
+  };
+
+  //the app interface
   return (
     <View style={styles.container}>
-      <View style={styles.avatar} />
-
       {loggedInUser ? (
         <>
-          <Text style={styles.name}>{loggedInUser.name}</Text>
-          <Text style={styles.email}>{loggedInUser.email}</Text>
-          <TouchableOpacity style={styles.button} onPress={handleLogout}>
+          <Text style={styles.title}>Account Info</Text>
+          <Text style={styles.infoItem}>👤 {loggedInUser.name}</Text>
+          <Text style={styles.infoItem}>📧 {loggedInUser.email}</Text>
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={async () => {
+              await fetchUserReviews();
+              setShowReviews(true);
+            }}
+          >
+            <Text style={styles.buttonText}>View My Reviews</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#555" }]} onPress={handleLogout}>
             <Text style={styles.buttonText}>Log Out</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.button, { backgroundColor: "red" }]} onPress={handleDeleteAccount}>
+            <Text style={styles.buttonText}>Delete Account</Text>
+          </TouchableOpacity>
+
+          <Modal visible={showReviews} animationType="slide">
+            <View style={styles.modalContainer}>
+              <Text style={styles.title}>My Reviews</Text>
+              <FlatList
+                data={reviews}
+                keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
+                renderItem={({ item }) => (
+                  <View style={styles.reviewItem}>
+                    <Text style={styles.reviewText}>⭐ {item.rating} — {item.text}</Text>
+                    {item.place_name && <Text style={styles.reviewSub}>📍 {item.place_name}</Text>}
+                  </View>
+                )}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                ListEmptyComponent={<Text>No reviews found.</Text>}
+              />
+              <TouchableOpacity style={[styles.button, { backgroundColor: "#555" }]} onPress={() => setShowReviews(false)}>
+                <Text style={styles.buttonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </Modal>
         </>
       ) : mode === "signup" ? (
         <>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#333"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            placeholderTextColor="#333"
-            value={username}
-            onChangeText={setUsername}
-            autoCapitalize="none"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#333"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+          <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" />
+          <TextInput style={styles.input} placeholder="Username" value={username} onChangeText={setUsername} />
+          <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
           <TouchableOpacity style={styles.button} onPress={handleSignUp}>
             <Text style={styles.buttonText}>Sign Up</Text>
           </TouchableOpacity>
@@ -172,22 +325,8 @@ export default function Account() {
         </>
       ) : mode === "login" ? (
         <>
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            placeholderTextColor="#333"
-            value={username}
-            onChangeText={setUsername}
-            autoCapitalize="none"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#333"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+          <TextInput style={styles.input} placeholder="Username" value={username} onChangeText={setUsername} />
+          <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
           <TouchableOpacity style={styles.button} onPress={handleLogin}>
             <Text style={styles.buttonText}>Log In</Text>
           </TouchableOpacity>
@@ -197,7 +336,7 @@ export default function Account() {
         </>
       ) : (
         <>
-          <Text style={styles.text}>You are not logged in to GreaseMeter.</Text>
+          <Text style={styles.text}>Please log in or create an account.</Text>
           <TouchableOpacity style={styles.button} onPress={() => setMode("signup")}>
             <Text style={styles.buttonText}>Sign Up</Text>
           </TouchableOpacity>
@@ -210,14 +349,27 @@ export default function Account() {
   );
 }
 
+//styles
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#fff", padding: 20 },
-  avatar: { width: 100, height: 100, borderRadius: 50, backgroundColor: "#ccc", marginBottom: 20 },
-  name: { fontSize: 22, fontWeight: "bold", marginBottom: 5, color: "#000" },
-  email: { fontSize: 16, color: "#555", marginBottom: 20 },
-  text: { fontSize: 18, marginBottom: 20, color: "#000", textAlign: "center" },
-  input: { width: "80%", height: 50, borderColor: "#ccc", borderWidth: 1, borderRadius: 8, marginBottom: 15, paddingHorizontal: 10, fontSize: 16 },
-  button: { backgroundColor: "#007AFF", paddingVertical: 12, paddingHorizontal: 30, borderRadius: 8, marginBottom: 10 },
+  container: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", padding: 20 },
+  title: { fontSize: 22, fontWeight: "bold", marginBottom: 10 },
+  infoItem: { fontSize: 16, color: "#000", marginBottom: 5 },
+  text: { fontSize: 18, marginBottom: 20, textAlign: "center", color: "#000" },
+  input: {
+    width: "80%",
+    height: 50,
+    borderColor: "#ccc",
+    borderWidth: 1,
+    borderRadius: 8,
+    marginBottom: 15,
+    paddingHorizontal: 10,
+    fontSize: 16,
+  },
+  button: { backgroundColor: "#007AFF", paddingVertical: 12, paddingHorizontal: 30, borderRadius: 8, marginVertical: 6 },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   linkText: { color: "#007AFF", fontSize: 16, marginTop: 5 },
+  modalContainer: { flex: 1, backgroundColor: "#fff", padding: 20 },
+  reviewItem: { borderBottomWidth: 1, borderBottomColor: "#eee", paddingVertical: 10 },
+  reviewText: { fontSize: 16, color: "#000" },
+  reviewSub: { fontSize: 14, color: "#555" },
 });
