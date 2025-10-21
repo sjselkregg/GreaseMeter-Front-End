@@ -213,6 +213,55 @@ export default function Account() {
     }
   }, []);
 
+
+  //delete a review
+const handleDeleteReview = async (reviewId: number | string) => {
+  Alert.alert("Confirm Deletion", "Are you sure you want to delete this review?", [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: "Delete",
+      style: "destructive",
+      onPress: async () => {
+        try {
+          const token = await AsyncStorage.getItem("userToken");
+          if (!token) {
+            Alert.alert("Error", "You must be logged in to delete reviews.");
+            return;
+          }
+
+          const res = await fetch(`${API_BASE}/my/reviews/${reviewId}`, {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+          });
+
+          const text = await res.text();
+          if (!res.ok) {
+            console.log("Delete review error:", text);
+            let message = "Failed to delete review.";
+            try {
+              const err = JSON.parse(text);
+              message = err.error || err.message || message;
+            } catch {}
+            Alert.alert("Error", message);
+            return;
+          }
+
+          // remove deleted review from state
+          setReviews((prev) => prev.filter((r) => r.id !== reviewId));
+          Alert.alert("Success", "Your review has been deleted.");
+        } catch (err) {
+          console.error("Error deleting review:", err);
+          Alert.alert("Error", "Network issue while deleting review.");
+        }
+      },
+    },
+  ]);
+};
+
+
   //refresh reviews
   const onRefresh = async () => {
     setRefreshing(true);
@@ -298,9 +347,22 @@ export default function Account() {
                 keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
                 renderItem={({ item }) => (
                   <View style={styles.reviewItem}>
-                    <Text style={styles.reviewText}>⭐ {item.rating} — {item.text}</Text>
-                    {item.place_name && <Text style={styles.reviewSub}>📍 {item.place_name}</Text>}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reviewText}>
+                      ⭐ {item.rating} — {item.text}
+                    </Text>
+                      {item.place_name && (
+                        <Text style={styles.reviewSub}>📍 {item.place_name}</Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.deleteButton}
+                      onPress={() => handleDeleteReview(item.id)}
+                    >
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </TouchableOpacity>
                   </View>
+
                 )}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
                 ListEmptyComponent={<Text>No reviews found.</Text>}
@@ -372,4 +434,17 @@ const styles = StyleSheet.create({
   reviewItem: { borderBottomWidth: 1, borderBottomColor: "#eee", paddingVertical: 10 },
   reviewText: { fontSize: 16, color: "#000" },
   reviewSub: { fontSize: 14, color: "#555" },
+  deleteButton: {
+  backgroundColor: "red",
+  paddingVertical: 6,
+  paddingHorizontal: 10,
+  borderRadius: 6,
+  alignSelf: "center",
+},
+deleteButtonText: {
+  color: "#fff",
+  fontWeight: "bold",
+  fontSize: 14,
+},
+
 });
