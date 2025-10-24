@@ -37,14 +37,25 @@ export default function MapScreen() {
   const [places, setPlaces] = useState<Place[]>([]);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [suggestions, setSuggestions] = useState<Place[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [showListModal, setShowListModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [reviewText, setReviewText] = useState("");
   const [reviewRating, setReviewRating] = useState("5");
 
   const mapRef = useRef<MapView | null>(null);
+  const searchTimeoutRef = useRef<any>(null);
+  const searchQueryIdRef = useRef(0);
 
   const screenHeight = Dimensions.get("window").height;
+  const initialRegion: Region = {
+    latitude: 39.9526,
+    longitude: -75.1652,
+    latitudeDelta: 0.05,
+    longitudeDelta: 0.05,
+  };
+  const [region, setRegion] = useState<Region>(initialRegion);
   const SNAP_POINTS = {
     CLOSED: screenHeight,
     HALF: screenHeight * 0.5,
@@ -91,8 +102,16 @@ export default function MapScreen() {
         "https://api.greasemeter.live/v1/places?lat=39.95&lng=-75.165&latDelta=0.1&lngDelta=0.1"
       );
       const data = await res.json();
-      const items = Array.isArray(data) ? data : data.items ?? [];
-      const mapped = items
+      // Normalize possible API shapes into an array
+      const candidates = [
+        Array.isArray(data) ? data : undefined,
+        data?.items,
+        data?.data,
+        data?.results,
+        data?.places,
+      ];
+      const items = candidates.find((c) => Array.isArray(c)) ?? [];
+      const mapped = (items as any[])
         .map((p: any) => {
           const coords =
             p.point?.coordinates ??
@@ -121,6 +140,74 @@ export default function MapScreen() {
     fetchPlaces();
   }, []);
 
+  // Debounced autocomplete tied to the search bar
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    const term = search.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    setIsSearching(true);
+    const queryId = ++searchQueryIdRef.current;
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const url = `https://api.greasemeter.live/v1/places/search?lat=${region.latitude}&lng=${region.longitude}&term=${encodeURIComponent(
+          term
+        )}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const candidates = [
+          Array.isArray(data) ? data : undefined,
+          data?.items,
+          data?.data,
+          data?.results,
+          data?.places,
+        ];
+        const items = (candidates.find((c) => Array.isArray(c)) ?? []) as any[];
+        const mapped: Place[] = items
+          .map((p: any) => {
+            const coords =
+              p.point?.coordinates ??
+              p.geometry?.coordinates ??
+              [p.lng ?? p.longitude, p.lat ?? p.latitude];
+            const lon = parseFloat(coords?.[0]);
+            const lat = parseFloat(coords?.[1]);
+            if (isNaN(lat) || isNaN(lon)) return null;
+            return {
+              id: p.id ?? p.place_id,
+              name: p.name ?? "Unnamed Place",
+              latitude: lat,
+              longitude: lon,
+              address: p.address ?? "",
+              rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
+            } as Place;
+          })
+          .filter(Boolean) as Place[];
+
+        if (searchQueryIdRef.current === queryId) {
+          setSuggestions(mapped);
+        }
+      } catch (e) {
+        if (searchQueryIdRef.current === queryId) {
+          setSuggestions([]);
+        }
+      } finally {
+        if (searchQueryIdRef.current === queryId) {
+          setIsSearching(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [search, region.latitude, region.longitude]);
+
   // Fetch reviews for a place
   const fetchReviews = async (placeId: number | string) => {
     try {
@@ -128,11 +215,20 @@ export default function MapScreen() {
         `https://api.greasemeter.live/v1/places/${placeId}/reviews?page=1&limit=20`
       );
       const data = await res.json();
-      const items = data.items ?? data;
-      const mapped = items.map((r: any, i: number) => ({
-        id: r.id ?? i,
-        text: r.text ?? "",
-        rating: r.rating ?? 0,
+      // Normalize possible API shapes into an array
+      const candidates = [
+        data?.items,
+        data?.data,
+        data?.results,
+        data?.reviews,
+        data,
+      ];
+      const items = candidates.find((c) => Array.isArray(c)) ?? [];
+
+      const mapped = (items as any[]).map((r: any, i: number) => ({
+        id: r?.id ?? i,
+        text: r?.text ?? "",
+        rating: parseFloat(r?.rating ?? 0) || 0,
       }));
       setReviews(mapped);
     } catch (err) {
@@ -142,6 +238,7 @@ export default function MapScreen() {
   };
 
   const openPlaceDetails = async (place: Place) => {
+    setSuggestions([]);
     setSelectedPlace(place);
     await fetchReviews(place.id);
     Animated.spring(slideAnim, { toValue: SNAP_POINTS.HALF, useNativeDriver: false }).start();
@@ -232,12 +329,8 @@ export default function MapScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        initialRegion={{
-          latitude: 39.9526,
-          longitude: -75.1652,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
+        initialRegion={initialRegion}
+        onRegionChangeComplete={(r) => setRegion(r)}
       >
         {places.map((place) => (
           <Marker
@@ -270,6 +363,55 @@ export default function MapScreen() {
           onSubmitEditing={fetchPlaces}
           returnKeyType="search"
         />
+        {(suggestions.length > 0) && (
+          <TouchableOpacity
+            style={styles.clearButton}
+            onPress={() => {
+              setSuggestions([]);
+              setSearch("");
+              Keyboard.dismiss();
+            }}
+            accessibilityLabel="Clear suggestions"
+          >
+            <Text style={styles.clearButtonText}>✕</Text>
+          </TouchableOpacity>
+        )}
+        {suggestions.length > 0 && (
+          <View style={styles.suggestionsContainer}>
+            <FlatList
+              keyboardShouldPersistTaps="handled"
+              data={suggestions}
+              keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.suggestionItem}
+                  onPress={() => {
+                    setSuggestions([]);
+                    setSearch(item.name);
+                    Keyboard.dismiss();
+                    mapRef.current?.animateToRegion(
+                      {
+                        latitude: item.latitude,
+                        longitude: item.longitude,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                      },
+                      600
+                    );
+                    openPlaceDetails(item);
+                  }}
+                >
+                  <Text style={styles.suggestionName}>{item.name}</Text>
+                  {!!item.address && (
+                    <Text style={styles.suggestionAddress} numberOfLines={1}>
+                      {item.address}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        )}
       </View>
 
       {/* List button */}
@@ -413,7 +555,36 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     fontSize: 16,
     elevation: 3,
+    paddingRight: 36,
   },
+  clearButton: {
+    position: "absolute",
+    right: 16,
+    top: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#eee",
+  },
+  clearButtonText: { color: "#333", fontSize: 14, fontWeight: "bold" },
+  suggestionsContainer: {
+    marginTop: 6,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    elevation: 4,
+    maxHeight: 220,
+    overflow: "hidden",
+  },
+  suggestionItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  suggestionName: { fontSize: 16, fontWeight: "600", color: "#000" },
+  suggestionAddress: { fontSize: 12, color: "#666", marginTop: 2 },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.3)" },
   bottomSheet: {
     position: "absolute",
