@@ -34,6 +34,9 @@ export default function Account() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [showReviews, setShowReviews] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [userReviewsPage, setUserReviewsPage] = useState(1);
+  const [userReviewsMore, setUserReviewsMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -205,8 +208,28 @@ export default function Account() {
       }
 
       const data = text ? JSON.parse(text) : {};
-      const items = Array.isArray(data) ? data : data.items ?? [];
-      setReviews(items);
+      const rawItems = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.results)
+        ? data.results
+        : [];
+
+      const mapped: Review[] = (rawItems as any[]).map((r: any, i) => ({
+        id: r?.id ?? i,
+        text: r?.text ?? "",
+        rating: typeof r?.rating === "number" ? r.rating : parseFloat(r?.rating ?? 0) || 0,
+        place_name: r?.place_name ?? r?.place?.name ?? undefined,
+      }));
+
+      if (page > 1) setReviews((prev) => [...prev, ...mapped]);
+      else setReviews(mapped);
+
+      setUserReviewsMore(Boolean((data && data.more === true) || (data?.data && data.data.more === true)));
+      setUserReviewsPage(page);
     } catch (err) {
       console.error("Error fetching reviews:", err);
       Alert.alert("Error", "Network issue while fetching reviews.");
@@ -265,7 +288,9 @@ const handleDeleteReview = async (reviewId: number | string) => {
   //refresh reviews
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchUserReviews();
+    setUserReviewsPage(1);
+    setUserReviewsMore(false);
+    await fetchUserReviews(1);
     setRefreshing(false);
   };
 
@@ -324,7 +349,9 @@ const handleDeleteReview = async (reviewId: number | string) => {
           <TouchableOpacity
             style={styles.button}
             onPress={async () => {
-              await fetchUserReviews();
+              setUserReviewsPage(1);
+              setUserReviewsMore(false);
+              await fetchUserReviews(1);
               setShowReviews(true);
             }}
           >
@@ -366,6 +393,25 @@ const handleDeleteReview = async (reviewId: number | string) => {
                 )}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
                 ListEmptyComponent={<Text>No reviews found.</Text>}
+                ListFooterComponent={
+                  userReviewsMore ? (
+                    <TouchableOpacity
+                      style={[styles.button, { alignSelf: "center", marginTop: 10 }]}
+                      disabled={loadingMore}
+                      onPress={async () => {
+                        if (loadingMore) return;
+                        setLoadingMore(true);
+                        try {
+                          await fetchUserReviews(userReviewsPage + 1);
+                        } finally {
+                          setLoadingMore(false);
+                        }
+                      }}
+                    >
+                      <Text style={styles.buttonText}>{loadingMore ? "Loading..." : "Load More"}</Text>
+                    </TouchableOpacity>
+                  ) : null
+                }
               />
               <TouchableOpacity style={[styles.button, { backgroundColor: "#555" }]} onPress={() => setShowReviews(false)}>
                 <Text style={styles.buttonText}>Close</Text>

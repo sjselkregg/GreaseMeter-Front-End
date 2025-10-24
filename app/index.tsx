@@ -211,8 +211,15 @@ export default function MapScreen() {
   // Fetch reviews for a place
   const fetchReviews = async (placeId: number | string) => {
     try {
+      const token = await AsyncStorage.getItem("userToken");
       const res = await fetch(
-        `https://api.greasemeter.live/v1/places/${placeId}/reviews?page=1&limit=20`
+        `https://api.greasemeter.live/v1/places/${placeId}/reviews?page=1&limit=20`,
+        {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            "Cache-Control": "no-cache",
+          },
+        }
       );
       const data = await res.json();
       // Normalize possible API shapes into an array
@@ -313,6 +320,19 @@ export default function MapScreen() {
         Alert.alert("Error", "Failed to submit review.");
         return;
       }
+      // Try to optimistically show the created review if returned
+      try {
+        const created = await res.json();
+        const r = created?.data ?? created;
+        if (r && (r.id || r.text)) {
+          const optimistic: Review = {
+            id: r.id ?? Date.now(),
+            text: r.text ?? reviewText.trim(),
+            rating: parseFloat(r.rating ?? reviewRating) || parseInt(reviewRating) || 0,
+          };
+          setReviews((prev) => [optimistic, ...prev]);
+        }
+      } catch {}
 
       setReviewText("");
       setReviewRating("5");
