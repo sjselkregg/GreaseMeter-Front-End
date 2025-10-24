@@ -35,6 +35,7 @@ type Review = {
 export default function MapScreen() {
   const [search, setSearch] = useState("");
   const [places, setPlaces] = useState<Place[]>([]);
+  const [rawPlaces, setRawPlaces] = useState<Place[]>([]);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [suggestions, setSuggestions] = useState<Place[]>([]);
@@ -98,9 +99,8 @@ export default function MapScreen() {
   // Fetch places
   const fetchPlaces = async () => {
     try {
-      const res = await fetch(
-        "https://api.greasemeter.live/v1/places?lat=39.95&lng=-75.165&latDelta=0.1&lngDelta=0.1"
-      );
+      const url = `https://api.greasemeter.live/v1/places?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}`;
+      const res = await fetch(url);
       const data = await res.json();
       // Normalize possible API shapes into an array
       const candidates = [
@@ -130,7 +130,7 @@ export default function MapScreen() {
           };
         })
         .filter(Boolean);
-      setPlaces(mapped);
+      setRawPlaces(mapped as Place[]);
     } catch (err) {
       console.error("Failed to fetch places:", err);
     }
@@ -139,6 +139,59 @@ export default function MapScreen() {
   useEffect(() => {
     fetchPlaces();
   }, []);
+
+  // Debounce fetch on region changes
+  const regionFetchTimeout = useRef<any>(null);
+  useEffect(() => {
+    if (regionFetchTimeout.current) clearTimeout(regionFetchTimeout.current);
+    regionFetchTimeout.current = setTimeout(() => {
+      fetchPlaces();
+    }, 400);
+    return () => {
+      if (regionFetchTimeout.current) clearTimeout(regionFetchTimeout.current);
+    };
+  }, [region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta]);
+
+  // Sample markers to avoid clutter when zoomed out
+  const samplePlacesForRegion = (all: Place[], r: Region): Place[] => {
+    if (!all?.length) return [];
+    const latDelta = Math.max(r.latitudeDelta, 0.0005);
+    const lngDelta = Math.max(r.longitudeDelta, 0.0005);
+    const rows = 12;
+    const cols = 12;
+    const latStep = latDelta / rows;
+    const lngStep = lngDelta / cols;
+    const minLat = r.latitude - latDelta / 2;
+    const minLng = r.longitude - lngDelta / 2;
+
+    const bestByCell = new Map<string, Place & { _count?: number }>();
+    for (const p of all) {
+      const i = Math.floor((p.latitude - minLat) / latStep);
+      const j = Math.floor((p.longitude - minLng) / lngStep);
+      const key = `${i}:${j}`;
+      const curr = bestByCell.get(key);
+      if (!curr) {
+        bestByCell.set(key, { ...p, _count: 1 });
+      } else {
+        const currScore = typeof curr.rating === "number" ? curr.rating : 0;
+        const newScore = typeof p.rating === "number" ? p.rating : 0;
+        if (newScore > currScore) bestByCell.set(key, { ...p, _count: (curr._count || 0) + 1 });
+        else curr._count = (curr._count || 0) + 1;
+      }
+    }
+
+    const result: Place[] = [];
+    bestByCell.forEach((val) => {
+      const count = val._count || 1;
+      if (count > 1) result.push({ ...val, name: `${val.name} (+${count - 1})` });
+      else result.push(val);
+    });
+    return result;
+  };
+
+  useEffect(() => {
+    setPlaces(samplePlacesForRegion(rawPlaces, region));
+  }, [rawPlaces, region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta]);
 
   // Debounced autocomplete tied to the search bar
   useEffect(() => {
