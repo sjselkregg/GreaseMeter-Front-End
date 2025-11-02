@@ -350,7 +350,8 @@ export default function MapScreen() {
     }
 
     const term = search.trim();
-    if (term.length < 2) {
+    // Start suggesting from first character typed
+    if (term.length < 1) {
       setSuggestions([]);
       return;
     }
@@ -374,6 +375,7 @@ export default function MapScreen() {
         const items = (candidates.find((c) => Array.isArray(c)) ?? []) as any[];
         const mapped: Place[] = items
           .map((p: any) => {
+            // API may only return id, name, address for search; fall back coords to current region center
             const coords =
               p.point?.coordinates ??
               p.geometry?.coordinates ??
@@ -381,10 +383,14 @@ export default function MapScreen() {
                 p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
                 p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
               ];
-            const lon = parseFloat(coords?.[0]);
-            const lat = parseFloat(coords?.[1]);
-            if (isNaN(lat) || isNaN(lon)) return null;
-            return {
+            let lon = parseFloat(coords?.[0]);
+            let lat = parseFloat(coords?.[1]);
+            if (isNaN(lat) || isNaN(lon)) {
+              lat = region.latitude;
+              lon = region.longitude;
+            }
+
+            const base: Place = {
               id:
                 p.id ??
                 p.place_id ??
@@ -400,9 +406,10 @@ export default function MapScreen() {
               longitude: lon,
               address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
               rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
-            } as Place;
-          })
-          .filter(Boolean) as Place[];
+            };
+            const cached = metaCacheRef.current.get(base.id);
+            return cached ? { ...base, ...cached } : base;
+          }) as Place[];
 
         if (searchQueryIdRef.current === queryId) {
           setSuggestions(mapped);

@@ -11,6 +11,7 @@ import {
   TextInput,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 
 type Bookmark = {
   id: number;
@@ -42,6 +43,10 @@ export default function Bookmarks() {
     try {
       const token = await AsyncStorage.getItem("userToken");
       if (!token) {
+        // Clear any previously loaded bookmarks when logged out
+        setBookmarks([]);
+        setSelectedBookmark(null);
+        setReviews([]);
         Alert.alert("Error", "You must be logged in to see bookmarks.");
         return;
       }
@@ -150,6 +155,13 @@ export default function Bookmarks() {
   useEffect(() => {
     fetchBookmarks();
   }, [fetchBookmarks]);
+
+  // Also refresh when the screen regains focus (e.g., after logout/login)
+  useFocusEffect(
+    useCallback(() => {
+      fetchBookmarks();
+    }, [fetchBookmarks])
+  );
 
   // Submit recommendation
   const handleSubmitRecommendation = async () => {
