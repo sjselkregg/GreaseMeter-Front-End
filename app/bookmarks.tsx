@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Modal,
   RefreshControl,
+  TextInput,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -29,6 +30,10 @@ export default function Bookmarks() {
   const [selectedBookmark, setSelectedBookmark] = useState<Bookmark | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [showRecommendModal, setShowRecommendModal] = useState(false);
+  const [recName, setRecName] = useState("");
+  const [recAddress, setRecAddress] = useState("");
+  const [submittingRec, setSubmittingRec] = useState(false);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -146,6 +151,56 @@ export default function Bookmarks() {
     fetchBookmarks();
   }, [fetchBookmarks]);
 
+  // Submit recommendation
+  const handleSubmitRecommendation = async () => {
+    const name = recName.trim();
+    const address = recAddress.trim();
+    if (!name || !address) {
+      Alert.alert("Missing Info", "Please enter both name and address.");
+      return;
+    }
+
+    try {
+      setSubmittingRec(true);
+      const token = await AsyncStorage.getItem("userToken");
+      if (!token) {
+        Alert.alert("Error", "You must be logged in to recommend a place.");
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/places/recommend`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name, address }),
+      });
+
+      const text = await res.text();
+      if (!res.ok) {
+        console.log("Recommend place error:", text);
+        let message = "Failed to submit recommendation.";
+        try {
+          const err = JSON.parse(text);
+          message = err.error || err.message || message;
+        } catch {}
+        Alert.alert("Error", message);
+        return;
+      }
+
+      setShowRecommendModal(false);
+      setRecName("");
+      setRecAddress("");
+      Alert.alert("Thank you!", "Your recommendation has been submitted.");
+    } catch (err) {
+      console.error("Error recommending place:", err);
+      Alert.alert("Error", "Network issue while submitting recommendation.");
+    } finally {
+      setSubmittingRec(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>My Bookmarks</Text>
@@ -172,6 +227,16 @@ export default function Bookmarks() {
           </TouchableOpacity>
         )}
         ListEmptyComponent={<Text>No bookmarks yet</Text>}
+        ListFooterComponent={
+          <View style={{ paddingVertical: 16 }}>
+            <TouchableOpacity
+              style={[styles.closeButton, { backgroundColor: "#007AFF" }]}
+              onPress={() => setShowRecommendModal(true)}
+            >
+              <Text style={styles.closeButtonText}>Recommend a Place</Text>
+            </TouchableOpacity>
+          </View>
+        }
       />
 
       {/* Modal for bookmark details */}
@@ -206,6 +271,44 @@ export default function Bookmarks() {
               </TouchableOpacity>
             </>
           )}
+        </View>
+      </Modal>
+
+      {/* Recommend a Place Modal */}
+      <Modal visible={showRecommendModal} animationType="slide">
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>Recommend a Place</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Place name"
+            value={recName}
+            onChangeText={setRecName}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Address"
+            value={recAddress}
+            onChangeText={setRecAddress}
+          />
+          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+            <TouchableOpacity
+              style={[styles.closeButton, { backgroundColor: "#555", flex: 1, marginRight: 8 }]}
+              onPress={() => {
+                setShowRecommendModal(false);
+                setRecName("");
+                setRecAddress("");
+              }}
+            >
+              <Text style={styles.closeButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.closeButton, { backgroundColor: "#007AFF", flex: 1, marginLeft: 8 }]}
+              onPress={handleSubmitRecommendation}
+              disabled={submittingRec}
+            >
+              <Text style={styles.closeButtonText}>{submittingRec ? "Submitting..." : "Submit"}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </View>
@@ -246,4 +349,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   closeButtonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+    backgroundColor: "#fff",
+  },
 });

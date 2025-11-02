@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Text,
   FlatList,
+  Image,
   Animated,
   Dimensions,
   PanResponder,
@@ -36,6 +37,12 @@ export default function MapScreen() {
   const [search, setSearch] = useState("");
   const [places, setPlaces] = useState<Place[]>([]);
   const [rawPlaces, setRawPlaces] = useState<Place[]>([]);
+  // Dedicated list view state (server-backed)
+  const [listPlaces, setListPlaces] = useState<Place[]>([]);
+  const [listPage, setListPage] = useState(1);
+  const [listHasMore, setListHasMore] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
+  const [listRefreshing, setListRefreshing] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [suggestions, setSuggestions] = useState<Place[]>([]);
@@ -44,10 +51,15 @@ export default function MapScreen() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [reviewText, setReviewText] = useState("");
   const [reviewRating, setReviewRating] = useState("5");
+  const [placeImages, setPlaceImages] = useState<string[]>([]);
 
   const mapRef = useRef<MapView | null>(null);
   const searchTimeoutRef = useRef<any>(null);
   const searchQueryIdRef = useRef(0);
+  const metaCacheRef = useRef<
+    Map<string | number, { name?: string; address?: string; rating?: number }>
+  >(new Map());
+  const metaInFlightRef = useRef<Set<string | number>>(new Set());
 
   const screenHeight = Dimensions.get("window").height;
   const initialRegion: Region = {
@@ -99,7 +111,7 @@ export default function MapScreen() {
   // Fetch places
   const fetchPlaces = async () => {
     try {
-      const url = `https://api.greasemeter.live/v1/places?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}`;
+      const url = `https://api.greasemeter.live/v1/places/map?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}`;
       const res = await fetch(url);
       const data = await res.json();
       // Normalize possible API shapes into an array
@@ -116,23 +128,161 @@ export default function MapScreen() {
           const coords =
             p.point?.coordinates ??
             p.geometry?.coordinates ??
-            [p.lng ?? p.longitude, p.lat ?? p.latitude];
+            [
+              p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
+              p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
+            ];
           const lon = parseFloat(coords?.[0]);
           const lat = parseFloat(coords?.[1]);
           if (isNaN(lat) || isNaN(lon)) return null;
-          return {
-            id: p.id ?? p.place_id,
-            name: p.name ?? "Unnamed Place",
+          const pid =
+            p.id ??
+            p.place_id ??
+            p.placeId ??
+            p.gm_place_id ??
+            p.google_place_id ??
+            p.googleId ??
+            p.gmaps_id ??
+            p.gmaps_place_id ??
+            p.osm_id;
+          const base: Place = {
+            id: pid ?? `${lat},${lon}`,
+            name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
             latitude: lat,
             longitude: lon,
-            address: p.address ?? "",
+            address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
             rating: parseFloat(p.avg_rating ?? p.rating ?? 0),
           };
+          const cached = metaCacheRef.current.get(base.id);
+          return cached ? { ...base, ...cached } : base;
         })
         .filter(Boolean);
       setRawPlaces(mapped as Place[]);
+      // Enrich names/addresses asynchronously for list view
+      enrichPlacesMeta(mapped as Place[]);
     } catch (err) {
       console.error("Failed to fetch places:", err);
+    }
+  };
+
+  // Fetch list view results from server (paginated)
+  const fetchListPlaces = async (opts?: { reset?: boolean; pageSize?: number }) => {
+    const reset = Boolean(opts?.reset);
+    const limit = Math.max(1, Math.min(50, opts?.pageSize ?? 20));
+    const nextPage = reset ? 1 : listPage;
+    if (listLoading) return;
+    setListLoading(true);
+    try {
+      const url = `https://api.greasemeter.live/v1/places/map?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}&page=${nextPage}&limit=${limit}`;
+      const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
+      const data = await res.json();
+      const candidates = [
+        Array.isArray(data) ? data : undefined,
+        data?.items,
+        data?.data,
+        data?.results,
+        data?.places,
+      ];
+      const items = candidates.find((c) => Array.isArray(c)) ?? [];
+      const mapped = (items as any[])
+        .map((p: any) => {
+          const coords =
+            p.point?.coordinates ??
+            p.geometry?.coordinates ??
+            [
+              p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
+              p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
+            ];
+          const lon = parseFloat(coords?.[0]);
+          const lat = parseFloat(coords?.[1]);
+          if (isNaN(lat) || isNaN(lon)) return null;
+          const pid =
+            p.id ??
+            p.place_id ??
+            p.placeId ??
+            p.gm_place_id ??
+            p.google_place_id ??
+            p.googleId ??
+            p.gmaps_id ??
+            p.gmaps_place_id ??
+            p.osm_id;
+          const base: Place = {
+            id: pid ?? `${lat},${lon}`,
+            name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
+            latitude: lat,
+            longitude: lon,
+            address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
+            rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
+          };
+          // Merge any cached meta immediately for better list UX
+          const cached = metaCacheRef.current.get(base.id);
+          return cached ? { ...base, ...cached } : base;
+        })
+        .filter(Boolean) as Place[];
+
+      if (reset) setListPlaces(mapped);
+      else setListPlaces((prev) => [...prev, ...mapped]);
+
+      // hasMore: prefer explicit flag if present
+      const moreFlag = Boolean(
+        (data && data.more === true) ||
+          (data?.data && data.data.more === true) ||
+          (data?.pagination && data.pagination.hasMore === true)
+      );
+      setListHasMore(moreFlag || (Array.isArray(mapped) && mapped.length >= limit));
+      setListPage(nextPage + 1);
+
+      // Opportunistically enrich metadata for visible list items
+      enrichPlacesMeta(mapped);
+    } catch (err) {
+      console.error("Failed to fetch list places:", err);
+      if (reset) setListPlaces([]);
+      setListHasMore(false);
+    } finally {
+      setListLoading(false);
+      if (listRefreshing) setListRefreshing(false);
+    }
+  };
+
+  // Fetch meta for places lacking name/address and patch results into state
+  const enrichPlacesMeta = async (list: Place[]) => {
+    const candidates = list.slice(0, 40); // cap to avoid overfetching
+    for (const p of candidates) {
+      if (!p) continue;
+      const needs = !p.name || p.name === "Unnamed Place" || !p.address;
+      if (!needs) continue;
+      const pidStr = typeof p.id === 'string' ? p.id : String(p.id);
+      if (!pidStr || (typeof pidStr === 'string' && pidStr.includes(','))) {
+        // Skip if we don't have a real place id
+        continue;
+      }
+      if (metaCacheRef.current.has(p.id) || metaInFlightRef.current.has(p.id)) continue;
+      metaInFlightRef.current.add(p.id);
+      try {
+        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/meta`, {
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!res.ok) continue;
+        const meta = await res.json();
+        const m = meta?.data ?? meta;
+        const patch: Partial<Place> = {};
+        if (typeof m?.name === "string" && m.name.trim()) patch.name = m.name;
+        if (typeof m?.address === "string" && m.address.trim()) patch.address = m.address;
+        if (typeof m?.rating === "number") patch.rating = m.rating;
+        if (Object.keys(patch).length) {
+          metaCacheRef.current.set(p.id, {
+            name: patch.name,
+            address: patch.address,
+            rating: patch.rating,
+          });
+          // Patch both map and list data with the enriched meta
+          setRawPlaces((prev) => prev.map((it) => (it.id === p.id ? { ...it, ...patch } : it)));
+          setListPlaces((prev) => prev.map((it) => (it.id === p.id ? { ...it, ...patch } : it)));
+        }
+      } catch {}
+      finally {
+        metaInFlightRef.current.delete(p.id);
+      }
     }
   };
 
@@ -227,16 +377,28 @@ export default function MapScreen() {
             const coords =
               p.point?.coordinates ??
               p.geometry?.coordinates ??
-              [p.lng ?? p.longitude, p.lat ?? p.latitude];
+              [
+                p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
+                p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
+              ];
             const lon = parseFloat(coords?.[0]);
             const lat = parseFloat(coords?.[1]);
             if (isNaN(lat) || isNaN(lon)) return null;
             return {
-              id: p.id ?? p.place_id,
-              name: p.name ?? "Unnamed Place",
+              id:
+                p.id ??
+                p.place_id ??
+                p.placeId ??
+                p.gm_place_id ??
+                p.google_place_id ??
+                p.googleId ??
+                p.gmaps_id ??
+                p.gmaps_place_id ??
+                p.osm_id ?? `${lat},${lon}`,
+              name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
               latitude: lat,
               longitude: lon,
-              address: p.address ?? "",
+              address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
               rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
             } as Place;
           })
@@ -299,7 +461,82 @@ export default function MapScreen() {
 
   const openPlaceDetails = async (place: Place) => {
     setSuggestions([]);
+    // Set selected with current info, then enrich with meta
     setSelectedPlace(place);
+    // Fetch meta to fill in name/address/rating if missing from map envelope
+    (async () => {
+      try {
+        const placeId = place.id;
+        const pidStr = typeof placeId === 'string' ? placeId : String(placeId);
+        if (!placeId || (typeof pidStr === 'string' && pidStr.includes(','))) {
+          // Skip meta fetch if we don't have a real place id
+          return;
+        }
+        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/meta`, {
+          headers: { "Content-Type": "application/json" },
+        });
+        if (res.ok) {
+          const meta = await res.json();
+          const m = meta?.data ?? meta;
+          setSelectedPlace((prev) => {
+            if (!prev || prev.id !== place.id) return prev;
+            return {
+              ...prev,
+              name: typeof m?.name === "string" && m.name.trim() ? m.name : prev.name,
+              address: typeof m?.address === "string" && m.address.trim() ? m.address : prev.address,
+              rating:
+                typeof m?.rating === "number"
+                  ? m.rating
+                  : (typeof prev?.rating === "number" ? prev.rating : 0),
+            } as Place;
+          });
+        }
+      } catch (e) {
+        // Silent fail; keep existing fallback values
+      }
+    })();
+    // Fetch images and possibly refined rating
+    (async () => {
+      try {
+        const placeId = place.id;
+        const pidStr = typeof placeId === 'string' ? placeId : String(placeId);
+        if (!placeId || (typeof pidStr === 'string' && pidStr.includes(','))) {
+          setPlaceImages([]);
+          return;
+        }
+        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/info`, {
+          headers: { "Content-Type": "application/json" },
+        });
+        if (res.ok) {
+          const info = await res.json();
+          const i = info?.data ?? info;
+          const imgsCandidate = Array.isArray(i)
+            ? i
+            : Array.isArray(i?.images)
+            ? i.images
+            : Array.isArray(i?.items)
+            ? i.items
+            : Array.isArray(i?.data)
+            ? i.data
+            : [];
+          const urls = (imgsCandidate as any[])
+            .map((it) => {
+              if (!it) return null;
+              if (typeof it === "string") return it;
+              return it.url || it.src || it.image || it.link || null;
+            })
+            .filter((u): u is string => typeof u === "string" && !!u);
+          setPlaceImages(urls);
+          if (typeof i?.rating === "number") {
+            setSelectedPlace((prev) => (prev && prev.id === place.id ? { ...prev, rating: i.rating } : prev));
+          }
+        } else {
+          setPlaceImages([]);
+        }
+      } catch (e) {
+        setPlaceImages([]);
+      }
+    })();
     await fetchReviews(place.id);
     Animated.spring(slideAnim, { toValue: SNAP_POINTS.HALF, useNativeDriver: false }).start();
   };
@@ -308,6 +545,7 @@ export default function MapScreen() {
     Animated.spring(slideAnim, { toValue: SNAP_POINTS.CLOSED, useNativeDriver: false }).start(() => {
       setSelectedPlace(null);
       setReviews([]);
+      setPlaceImages([]);
     });
   };
 
@@ -405,9 +643,9 @@ export default function MapScreen() {
         initialRegion={initialRegion}
         onRegionChangeComplete={(r) => setRegion(r)}
       >
-        {places.map((place) => (
+        {places.map((place, idx) => (
           <Marker
-            key={place.id}
+            key={`${place.id}-${place.latitude}-${place.longitude}-${idx}`}
             coordinate={{ latitude: place.latitude, longitude: place.longitude }}
             onPress={() => openPlaceDetails(place)}
           >
@@ -454,13 +692,13 @@ export default function MapScreen() {
             <FlatList
               keyboardShouldPersistTaps="handled"
               data={suggestions}
-              keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
+              keyExtractor={(item, i) => `${item.id ?? 'no-id'}-${i}`}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.suggestionItem}
                   onPress={() => {
                     setSuggestions([]);
-                    setSearch(item.name);
+                    setSearch(item.name || "");
                     Keyboard.dismiss();
                     mapRef.current?.animateToRegion(
                       {
@@ -512,10 +750,23 @@ export default function MapScreen() {
               ) : null}
             </Text>
             <Text style={styles.placeAddress}>{selectedPlace.address}</Text>
+            {placeImages.length > 0 && (
+              <View style={styles.imagesContainer}>
+                <FlatList
+                  horizontal
+                  data={placeImages}
+                  keyExtractor={(uri, idx) => `${uri}-${idx}`}
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => (
+                    <Image source={{ uri: item }} style={styles.placeImage} />
+                  )}
+                />
+              </View>
+            )}
             <Text style={styles.sectionTitle}>Reviews</Text>
             <FlatList
               data={reviews}
-              keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
+              keyExtractor={(item, i) => `${item.id ?? 'no-id'}-${i}`}
               renderItem={({ item }) => (
                 <View style={styles.review}>
                   <Text style={styles.reviewText}>
@@ -541,12 +792,46 @@ export default function MapScreen() {
       </Animated.View>
 
       {/* List Modal */}
-      <Modal visible={showListModal} animationType="slide">
+      <Modal
+        visible={showListModal}
+        animationType="slide"
+        onShow={() => {
+          // When opening list view, fetch fresh list from server for current region
+          setListPage(1);
+          setListHasMore(true);
+          setListPlaces([]);
+          fetchListPlaces({ reset: true });
+        }}
+      >
         <View style={styles.modalContainer}>
           <Text style={styles.sectionTitle}>All Places</Text>
           <FlatList
-            data={places}
-            keyExtractor={(item) => item.id.toString()}
+            data={listPlaces}
+            keyExtractor={(item, i) => `${item.id ?? `${item.latitude},${item.longitude}`}-${i}`}
+            refreshing={listRefreshing}
+            onRefresh={() => {
+              setListRefreshing(true);
+              setListPage(1);
+              setListHasMore(true);
+              setListPlaces([]);
+              fetchListPlaces({ reset: true });
+            }}
+            onEndReachedThreshold={0.4}
+            onEndReached={() => {
+              if (!listLoading && listHasMore) fetchListPlaces();
+            }}
+            ListFooterComponent={
+              listLoading ? (
+                <Text style={{ textAlign: "center", paddingVertical: 8 }}>Loading…</Text>
+              ) : null
+            }
+            onViewableItemsChanged={({ viewableItems }) => {
+              try {
+                const visible = (viewableItems || []).map((v: any) => v.item).filter(Boolean) as Place[];
+                enrichPlacesMeta(visible);
+              } catch {}
+            }}
+            viewabilityConfig={{ itemVisiblePercentThreshold: 40 }}
             renderItem={({ item }) => (
               <TouchableOpacity
                 style={styles.placeItem}
@@ -676,6 +961,8 @@ const styles = StyleSheet.create({
   sheetContent: { flex: 1 },
   placeTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 4 },
   placeAddress: { fontSize: 14, color: "#555", marginBottom: 12 },
+  imagesContainer: { marginBottom: 12 },
+  placeImage: { width: 160, height: 100, borderRadius: 8, marginRight: 8, backgroundColor: "#eee" },
   placeRating: { fontSize: 16, color: "#f39c12", fontWeight: "bold" },
   sectionTitle: { fontSize: 16, fontWeight: "bold", marginTop: 10 },
   review: { paddingVertical: 4 },
