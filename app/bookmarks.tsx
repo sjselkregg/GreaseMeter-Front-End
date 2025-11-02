@@ -293,12 +293,14 @@ export default function Bookmarks() {
           <TextInput
             style={styles.input}
             placeholder="Place name"
+            placeholderTextColor="#666"
             value={recName}
             onChangeText={setRecName}
           />
           <TextInput
             style={styles.input}
             placeholder="Address"
+            placeholderTextColor="#666"
             value={recAddress}
             onChangeText={setRecAddress}
           />

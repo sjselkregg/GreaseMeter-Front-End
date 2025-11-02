@@ -51,6 +51,8 @@ export default function MapScreen() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [reviewText, setReviewText] = useState("");
   const [reviewRating, setReviewRating] = useState("5");
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState("");
   const [placeImages, setPlaceImages] = useState<string[]>([]);
 
   const mapRef = useRef<MapView | null>(null);
@@ -642,6 +644,45 @@ export default function MapScreen() {
     }
   };
 
+  const handleSubmitReport = async () => {
+    if (!selectedPlace) return;
+    const reason = reportReason.trim();
+    if (!reason) {
+      Alert.alert("Error", "Please enter a reason to report.");
+      return;
+    }
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      if (!token) {
+        Alert.alert("Error", "You must be logged in to report a place.");
+        return;
+      }
+      const res = await fetch(
+        `https://api.greasemeter.live/v1/places/${selectedPlace.id}/report`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ reason }),
+        }
+      );
+      if (!res.ok) {
+        const text = await res.text();
+        console.log("Report place error:", text);
+        Alert.alert("Error", "Failed to report place.");
+        return;
+      }
+      setReportReason("");
+      setShowReportModal(false);
+      Alert.alert("Thank you", "Your report has been submitted.");
+    } catch (err) {
+      console.error("Report submission error:", err);
+      Alert.alert("Error", "Network issue while submitting report.");
+    }
+  };
+
   return (
     <View style={styles.container}>
       <MapView
@@ -675,7 +716,7 @@ export default function MapScreen() {
         <TextInput
           style={styles.searchBar}
           placeholder="Search places..."
-          placeholderTextColor="#888"
+          placeholderTextColor="#666"
           value={search}
           onChangeText={setSearch}
           onSubmitEditing={fetchPlaces}
@@ -794,6 +835,12 @@ export default function MapScreen() {
                 <Text style={styles.buttonText}>Add Review</Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: "#c0392b" }]}
+              onPress={() => setShowReportModal(true)}
+            >
+              <Text style={styles.buttonText}>Report Place</Text>
+            </TouchableOpacity>
           </View>
         )}
       </Animated.View>
@@ -880,14 +927,16 @@ export default function MapScreen() {
             <TextInput
               style={styles.input}
               placeholder="Your review..."
+              placeholderTextColor="#666"
               value={reviewText}
               onChangeText={setReviewText}
               multiline
             />
             <TextInput
               style={styles.input}
-              placeholder="Rating (1–5)"
+              placeholder="Rating (1-5)"
               keyboardType="numeric"
+              placeholderTextColor="#666"
               value={reviewRating}
               onChangeText={setReviewRating}
             />
@@ -900,6 +949,37 @@ export default function MapScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionButton} onPress={handleSubmitReview}>
                 <Text style={styles.buttonText}>Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Report Place Modal */}
+      <Modal visible={showReportModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.sectionTitle}>Report Place</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Reason for report..."
+              placeholderTextColor="#666"
+              value={reportReason}
+              onChangeText={setReportReason}
+              multiline
+            />
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: "#555" }]}
+                onPress={() => setShowReportModal(false)}
+              >
+                <Text style={styles.buttonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: "#c0392b" }]}
+                onPress={handleSubmitReport}
+              >
+                <Text style={styles.buttonText}>Submit Report</Text>
               </TouchableOpacity>
             </View>
           </View>
