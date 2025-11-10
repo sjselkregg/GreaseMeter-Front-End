@@ -1,0 +1,276 @@
+# Users
+  # Register a new user request
+    curl -X POST https://api.greasemeter.live/v1/users/register \
+    -H "Content-Type: application/json" \
+    -d '{
+      "email": "test@example.com",
+      "password": "passwordpassword",
+      "name": "test123"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Register a new user response (204)
+    {null}
+
+  # Login a returning user request
+    curl -X POST https://api.greasemeter.live/v1/users/login \
+    -H "Content-Type: application/json" \
+    -d '{
+      "password": "passwordpassword",
+      "name": "gemstonecrab"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Login a returning user response (200)
+    {"token": string}
+
+  # Forgot password request
+    curl -X POST https://api.greasemeter.live/v1/users/forgot-password \
+    -H "Content-Type: application/json" \
+    -d '{
+      "email": "test@example.com"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Forgot password response (204)
+    {null}
+
+  # Reset password request
+    curl -X POST https://api.greasemeter.live/v1/users/reset-password/{string} \
+    -H "Content-Type: application/json" \
+    -d '{
+      "password": "passwordpassword"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Reset password response (204)
+    {null}
+
+  # Delete user request
+    curl -X DELETE https://api.greasemeter.live/v1/users \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Delete user response (204)
+    {null}
+
+# Places
+  # Map markers request
+    curl -X GET "https://api.greasemeter.live/v1/places/map?lat=float64&lng=float64&latDelta=float64&lngDelta=float64" \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Map markers response (200)
+    [
+      {
+        "id": int,
+        "point": geoJSONPoint
+      }
+    ]
+
+  # List view request
+    curl -X GET "https://api.greasemeter.live/v1/places/list?lat=float64&lng=float64&latDelta=float64&lngDelta=float64&page=int&limit=int" \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # List view response (200)
+    {
+      "data": [
+        "id": int
+	"name": string
+	"address": string
+	"rating": int
+      ],
+      "more": bool
+    }  
+
+  # Search request
+    curl -X GET "https://api.greasemeter.live/v1/places/search?term=string&lat=float64&lng=float64" \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Search response (200)
+    [
+      {
+	"id": int,
+	"name": string,
+	"address": string
+      }
+    ]
+
+  # Meta request
+    curl -X GET https://api.greasemeter.live/v1/places/{int}/meta \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Meta response (200)
+    {
+      "name": string,
+      "address": string,
+      "rating": float32
+    }
+
+  # Info request
+    curl -X GET https://api.greasemeter.live/v1/places/{int}/info \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Info response (200)
+    {
+      "rating": float32,
+      "images": [string]
+    }
+
+  # Images request
+    curl -X GET https://api.greasemeter.live/v1/places/{int}/images \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Images response (200)
+    [string]
+
+# Reviews
+  # Reviews for place request
+    curl -X GET https://api.greasemeter.live/v1/reviews/places/{int}?page=int&limit=int \
+    -H "Content-Type: application/json" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Reviews for place response (200)
+    {
+      "data": [
+        "id": int
+	"name": string (represents username)
+	"rating": int
+	"text": string
+	"time": time
+      ],
+      "more": bool
+    }
+
+  # Create review request
+    curl -X POST https://api.greasemeter.live/v1/reviews/places/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -d '{
+      "rating": 5
+      "text": "i like it"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Create review response (201)
+    {
+      "id": int
+      "time": time
+    }
+
+  # Reviews for user request
+    curl -X GET https://api.greasemeter.live/v1/reviews?page=int&limit=int \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Reviews for user response (200)
+    {
+      "data": [
+        "id": int
+	"name": string (represents place name)
+	"rating": int
+	"text": string
+	"time": time
+      ],
+      "more": bool
+    }
+
+  # Update review request
+    curl -X PATCH https://api.greasemeter.live/v1/reviews/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -d '{
+      "rating": 1
+      "text": "i dont like it"
+    }' \    
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Update review response (200)
+    {"time": time}
+
+  # Delete review request
+    curl -X DELETE https://api.greasemeter.live/v1/reviews/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Delete review response (204)
+    {null}
+
+# Bookmarks
+  # Create bookmark request
+    curl -X POST https://api.greasemeter.live/v1/bookmarks/places/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Create bookmark response (204)
+    {null}
+
+  # Bookmarks for user request
+    curl -X DELETE https://api.greasemeter.live/v1/bookmarks \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Bookmarks for user response (200)
+    [
+      {
+        "id": int
+	"placeId": int
+	"name": string
+	"address": string
+      }
+    ]
+
+# Is place bookmarked request
+    curl -X GET https://api.greasemeter.live/v1/bookmarks/places/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Is place bookmarked response (200)
+    {bool}
+
+  # Delete bookmark request
+    curl -X DELETE https://api.greasemeter.live/v1/bookmarks/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Delete bookmark response (204)
+    {null}
+
+# Recommendations
+  #  Create recommendation request
+    curl -X POST https://api.greasemeter.live/v1/recommendations \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -d '{
+      "name": "chucke e cheese"
+      "address": "1234 street road"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Create bookmark response (204)
+    {null}
+
+# Reports
+  #  Create report request
+    curl -X POST https://api.greasemeter.live/v1/reports/places/{int} \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer (token goes here)" \
+    -d '{
+      "reason": "doesnt have coooper"
+    }' \
+    -w "\nHTTP Status: %{http_code}\n"
+
+  # Create bookmark response (204)
+    {null}

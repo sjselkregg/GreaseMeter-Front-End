@@ -51,7 +51,7 @@ export default function Bookmarks() {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/my/bookmarks`, {
+      const res = await fetch(`${API_BASE}/bookmarks`, {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -80,7 +80,7 @@ export default function Bookmarks() {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/my/bookmarks/${bookmarkId}`, {
+      const res = await fetch(`${API_BASE}/bookmarks/${bookmarkId}`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
@@ -106,7 +106,7 @@ export default function Bookmarks() {
   // Fetch reviews for a specific place
   const fetchReviews = async (placeId: number) => {
     try {
-      const res = await fetch(`${API_BASE}/places/${placeId}/reviews?page=1&limit=20`, {
+      const res = await fetch(`${API_BASE}/reviews/places/${placeId}?page=1&limit=20`, {
         headers: { "Content-Type": "application/json" },
       });
 
@@ -180,7 +180,7 @@ export default function Bookmarks() {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/places/recommend`, {
+      const res = await fetch(`${API_BASE}/recommendations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -31,6 +31,7 @@ type Review = {
   id: number | string;
   text: string;
   rating: number;
+  name?: string; // review author's username
 };
 
 export default function MapScreen() {
@@ -175,7 +176,7 @@ export default function MapScreen() {
     if (listLoading) return;
     setListLoading(true);
     try {
-      const url = `https://api.greasemeter.live/v1/places/map?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}&page=${nextPage}&limit=${limit}`;
+      const url = `https://api.greasemeter.live/v1/places/list?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}&page=${nextPage}&limit=${limit}`;
       const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
       const data = await res.json();
       const candidates = [
@@ -437,7 +438,7 @@ export default function MapScreen() {
     try {
       const token = await AsyncStorage.getItem("userToken");
       const res = await fetch(
-        `https://api.greasemeter.live/v1/places/${placeId}/reviews?page=1&limit=20`,
+        `https://api.greasemeter.live/v1/reviews/places/${placeId}?page=1&limit=20`,
         {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -460,6 +461,11 @@ export default function MapScreen() {
         id: r?.id ?? i,
         text: r?.text ?? "",
         rating: parseFloat(r?.rating ?? 0) || 0,
+        name:
+          (typeof r?.name === "string" && r.name) ||
+          (typeof r?.username === "string" && r.username) ||
+          (typeof r?.user?.name === "string" && r.user.name) ||
+          undefined,
       }));
       setReviews(mapped);
     } catch (err) {
@@ -567,7 +573,7 @@ export default function MapScreen() {
         return;
       }
       const res = await fetch(
-        `https://api.greasemeter.live/v1/places/${selectedPlace.id}/bookmarks`,
+        `https://api.greasemeter.live/v1/bookmarks/places/${selectedPlace.id}`,
         {
           method: "POST",
           headers: {
@@ -600,7 +606,7 @@ export default function MapScreen() {
       }
 
       const res = await fetch(
-        `https://api.greasemeter.live/v1/places/${selectedPlace.id}/reviews`,
+        `https://api.greasemeter.live/v1/reviews/places/${selectedPlace.id}`,
         {
           method: "POST",
           headers: {
@@ -658,7 +664,7 @@ export default function MapScreen() {
         return;
       }
       const res = await fetch(
-        `https://api.greasemeter.live/v1/places/${selectedPlace.id}/report`,
+        `https://api.greasemeter.live/v1/reports/places/${selectedPlace.id}`,
         {
           method: "POST",
           headers: {
@@ -818,7 +824,7 @@ export default function MapScreen() {
               renderItem={({ item }) => (
                 <View style={styles.review}>
                   <Text style={styles.reviewText}>
-                    ⭐ {item.rating} - {item.text}
+                    {item.name ? `${item.name} — ` : ""}⭐ {item.rating} - {item.text}
                   </Text>
                 </View>
               )}

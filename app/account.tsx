@@ -44,7 +44,10 @@ export default function Account() {
     (async () => {
       try {
         const token = await AsyncStorage.getItem("userToken");
-        if (token) setLoggedInUser({ name: "User", email: "", token });
+        if (token) {
+          const storedEmail = (await AsyncStorage.getItem("userEmail")) || "";
+          setLoggedInUser({ name: "User", email: storedEmail, token });
+        }
       } catch (err) {
         console.error("Error loading saved user:", err);
       }
@@ -71,7 +74,7 @@ export default function Account() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/auth/register`, {
+      const res = await fetch(`${API_BASE}/users/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -110,6 +113,7 @@ export default function Account() {
       }
 
       await AsyncStorage.setItem("userToken", data.token);
+      await AsyncStorage.setItem("userEmail", data.email || trimmedEmail);
       setLoggedInUser({ name: data.name || trimmedName, email: data.email || trimmedEmail, token: data.token });
       setMode("default");
       Alert.alert("Success", "Account created successfully!");
@@ -129,7 +133,7 @@ export default function Account() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${API_BASE}/users/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmedName, password: trimmedPassword }),
@@ -160,7 +164,9 @@ export default function Account() {
       }
 
       await AsyncStorage.setItem("userToken", data.token);
-      setLoggedInUser({ name: data.name || trimmedName, email: data.email || "", token: data.token });
+      const emailFromResponse = data?.email || data?.user?.email || data?.data?.email || "";
+      if (emailFromResponse) await AsyncStorage.setItem("userEmail", emailFromResponse);
+      setLoggedInUser({ name: data.name || trimmedName, email: emailFromResponse, token: data.token });
       setMode("default");
       Alert.alert("Success", `Welcome back, ${data.name || trimmedName}!`);
     } catch (err) {
@@ -173,6 +179,7 @@ export default function Account() {
   const handleLogout = async () => {
     try {
       await AsyncStorage.removeItem("userToken");
+      await AsyncStorage.removeItem("userEmail");
       setLoggedInUser(null);
     } catch (err) {
       console.error("Logout error:", err);
@@ -188,7 +195,7 @@ export default function Account() {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/my/reviews?page=${page}&limit=50`, {
+      const res = await fetch(`${API_BASE}/reviews?page=${page}&limit=20`, {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -252,7 +259,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
             return;
           }
 
-          const res = await fetch(`${API_BASE}/my/reviews/${reviewId}`, {
+          const res = await fetch(`${API_BASE}/reviews/${reviewId}`, {
             method: "DELETE",
             headers: {
               "Content-Type": "application/json",
@@ -305,7 +312,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
           try {
             const token = await AsyncStorage.getItem("userToken");
             if (!token) return;
-            const res = await fetch(`${API_BASE}/my/account`, {
+            const res = await fetch(`${API_BASE}/users`, {
               method: "DELETE",
               headers: {
                 "Content-Type": "application/json",
