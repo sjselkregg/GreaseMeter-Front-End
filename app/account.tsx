@@ -37,6 +37,9 @@ export default function Account() {
   const [userReviewsPage, setUserReviewsPage] = useState(1);
   const [userReviewsMore, setUserReviewsMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -183,6 +186,38 @@ export default function Account() {
       setLoggedInUser(null);
     } catch (err) {
       console.error("Logout error:", err);
+    }
+  };
+
+  // forgot password
+  const handleForgotPassword = async () => {
+    const emailToSend = (forgotEmail || email).trim();
+    if (!emailToSend || !emailToSend.includes("@") || !emailToSend.includes(".")) {
+      Alert.alert("Invalid Email", "Please enter a valid email address.");
+      return;
+    }
+    try {
+      setForgotSubmitting(true);
+      const res = await fetch(`${API_BASE}/users/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailToSend }),
+      });
+      if (!res.ok && res.status !== 204) {
+        const txt = await res.text();
+        console.log("Forgot password error:", txt);
+      }
+      Alert.alert(
+        "Check Your Email",
+        "If an account exists for that email, you'll receive a reset link shortly."
+      );
+      setShowForgotModal(false);
+      setForgotEmail("");
+    } catch (err) {
+      console.error("Forgot password error:", err);
+      Alert.alert("Error", "Could not request password reset.");
+    } finally {
+      setForgotSubmitting(false);
     }
   };
 
@@ -445,6 +480,9 @@ const handleDeleteReview = async (reviewId: number | string) => {
           <TouchableOpacity style={styles.button} onPress={handleLogin}>
             <Text style={styles.buttonText}>Log In</Text>
           </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowForgotModal(true)}>
+            <Text style={styles.linkText}>Forgot password?</Text>
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => setMode("default")}>
             <Text style={styles.linkText}>Back</Text>
           </TouchableOpacity>
@@ -460,6 +498,40 @@ const handleDeleteReview = async (reviewId: number | string) => {
           </TouchableOpacity>
         </>
       )}
+      {/* Forgot Password Modal */}
+      <Modal visible={showForgotModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.title}>Reset Password</Text>
+            <Text style={[styles.text, { marginBottom: 10 }]}>Enter your account email to receive a reset link.</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#666"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={forgotEmail}
+              onChangeText={setForgotEmail}
+            />
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: "#555", flex: 1, marginRight: 6 }]}
+                onPress={() => setShowForgotModal(false)}
+                disabled={forgotSubmitting}
+              >
+                <Text style={styles.buttonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, { flex: 1, marginLeft: 6 }]}
+                onPress={handleForgotPassword}
+                disabled={forgotSubmitting}
+              >
+                <Text style={styles.buttonText}>{forgotSubmitting ? "Sending..." : "Send Link"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -499,5 +571,18 @@ deleteButtonText: {
   fontWeight: "bold",
   fontSize: 14,
 },
+
+  // overlay styles for small modals
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 20,
+  },
 
 });
