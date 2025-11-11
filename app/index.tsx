@@ -182,12 +182,15 @@ export default function MapScreen() {
       const candidates = [
         Array.isArray(data) ? data : undefined,
         data?.items,
-        data?.data,
+        data?.data?.items,
+        data?.data?.results,
+        data?.data?.places,
         data?.results,
         data?.places,
+        data?.data,
       ];
-      const items = candidates.find((c) => Array.isArray(c)) ?? [];
-      const mapped = (items as any[])
+      let items = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
+      let mapped = (items as any[])
         .map((p: any) => {
           const coords =
             p.point?.coordinates ??
@@ -198,7 +201,6 @@ export default function MapScreen() {
             ];
           const lon = parseFloat(coords?.[0]);
           const lat = parseFloat(coords?.[1]);
-          if (isNaN(lat) || isNaN(lon)) return null;
           const pid =
             p.id ??
             p.place_id ??
@@ -212,16 +214,63 @@ export default function MapScreen() {
           const base: Place = {
             id: pid ?? `${lat},${lon}`,
             name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
-            latitude: lat,
-            longitude: lon,
+            latitude: isNaN(lat) ? Number.NaN : lat,
+            longitude: isNaN(lon) ? Number.NaN : lon,
             address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
             rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
           };
           // Merge any cached meta immediately for better list UX
           const cached = metaCacheRef.current.get(base.id);
           return cached ? { ...base, ...cached } : base;
-        })
-        .filter(Boolean) as Place[];
+        }) as Place[];
+
+      // Fallback: if list endpoint returns nothing, try map endpoint once per reset
+      if ((!mapped || mapped.length === 0) && reset) {
+        try {
+          const mapUrl = `https://api.greasemeter.live/v1/places/map?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}`;
+          const mapRes = await fetch(mapUrl, { headers: { "Content-Type": "application/json" } });
+          const mapData = await mapRes.json();
+          const mapCandidates = [
+            Array.isArray(mapData) ? mapData : undefined,
+            mapData?.items,
+            mapData?.data?.items,
+            mapData?.data?.results,
+            mapData?.data?.places,
+            mapData?.results,
+            mapData?.places,
+            mapData?.data,
+          ];
+          items = (mapCandidates.find((c) => Array.isArray(c)) as any[]) ?? [];
+          mapped = (items as any[])
+            .map((p: any) => {
+              const coords =
+                p.point?.coordinates ??
+                p.geometry?.coordinates ??
+                [
+                  p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
+                  p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
+                ];
+              const lon = parseFloat(coords?.[0]);
+              const lat = parseFloat(coords?.[1]);
+              const pid =
+                p.id ?? p.place_id ?? p.placeId ?? p.gm_place_id ?? p.google_place_id ?? p.googleId ?? p.gmaps_id ?? p.gmaps_place_id ?? p.osm_id;
+              const base: Place = {
+                id: pid ?? `${lat},${lon}`,
+                name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
+                latitude: isNaN(lat) ? Number.NaN : lat,
+                longitude: isNaN(lon) ? Number.NaN : lon,
+                address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
+                rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
+              };
+              const cached = metaCacheRef.current.get(base.id);
+              return cached ? { ...base, ...cached } : base;
+            }) as Place[];
+          // Since map endpoint isn't paginated the same way, assume no more
+          setListHasMore(false);
+        } catch (e) {
+          // ignore
+        }
+      }
 
       if (reset) setListPlaces(mapped);
       else setListPlaces((prev) => [...prev, ...mapped]);
@@ -232,7 +281,9 @@ export default function MapScreen() {
           (data?.data && data.data.more === true) ||
           (data?.pagination && data.pagination.hasMore === true)
       );
-      setListHasMore(moreFlag || (Array.isArray(mapped) && mapped.length >= limit));
+      if (!reset || mapped.length > 0) {
+        setListHasMore(moreFlag || (Array.isArray(mapped) && mapped.length >= limit));
+      }
       setListPage(nextPage + 1);
 
       // Opportunistically enrich metadata for visible list items
@@ -246,6 +297,16 @@ export default function MapScreen() {
       if (listRefreshing) setListRefreshing(false);
     }
   };
+
+  // Ensure list view loads when modal opens (onShow can be unreliable on some platforms)
+  useEffect(() => {
+    if (!showListModal) return;
+    setListPage(1);
+    setListHasMore(true);
+    setListPlaces([]);
+    fetchListPlaces({ reset: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showListModal]);
 
   // Fetch meta for places lacking name/address and patch results into state
   const enrichPlacesMeta = async (list: Place[]) => {
@@ -272,6 +333,22 @@ export default function MapScreen() {
         if (typeof m?.name === "string" && m.name.trim()) patch.name = m.name;
         if (typeof m?.address === "string" && m.address.trim()) patch.address = m.address;
         if (typeof m?.rating === "number") patch.rating = m.rating;
+        // Also patch coordinates if present
+        try {
+          const coords =
+            m?.point?.coordinates ??
+            m?.geometry?.coordinates ??
+            [
+              m?.lng ?? m?.longitude ?? m?.location?.lng ?? m?.center?.[0] ?? m?.coordinates?.[0],
+              m?.lat ?? m?.latitude ?? m?.location?.lat ?? m?.center?.[1] ?? m?.coordinates?.[1],
+            ];
+          const lon = parseFloat(coords?.[0]);
+          const lat = parseFloat(coords?.[1]);
+          if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+            patch.latitude = lat;
+            patch.longitude = lon;
+          }
+        } catch {}
         if (Object.keys(patch).length) {
           metaCacheRef.current.set(p.id, {
             name: patch.name,
@@ -287,6 +364,60 @@ export default function MapScreen() {
         metaInFlightRef.current.delete(p.id);
       }
     }
+  };
+
+  // Resolve coordinates for a place when missing
+  const resolvePlaceWithCoords = async (place: Place): Promise<Place> => {
+    if (place && !Number.isNaN(place.latitude) && !Number.isNaN(place.longitude)) return place;
+    const placeId = place.id;
+    const pidStr = typeof placeId === 'string' ? placeId : String(placeId);
+    let lat = place.latitude;
+    let lon = place.longitude;
+    try {
+      const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/meta`, {
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        const meta = await res.json();
+        const m = meta?.data ?? meta;
+        const coords =
+          m?.point?.coordinates ??
+          m?.geometry?.coordinates ??
+          [
+            m?.lng ?? m?.longitude ?? m?.location?.lng ?? m?.center?.[0] ?? m?.coordinates?.[0],
+            m?.lat ?? m?.latitude ?? m?.location?.lat ?? m?.center?.[1] ?? m?.coordinates?.[1],
+          ];
+        const lonP = parseFloat(coords?.[0]);
+        const latP = parseFloat(coords?.[1]);
+        if (!Number.isNaN(latP) && !Number.isNaN(lonP)) {
+          lat = latP; lon = lonP;
+        }
+      }
+    } catch {}
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      try {
+        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/info`, {
+          headers: { "Content-Type": "application/json" },
+        });
+        if (res.ok) {
+          const info = await res.json();
+          const i = info?.data ?? info;
+          const coords =
+            i?.point?.coordinates ??
+            i?.geometry?.coordinates ??
+            [
+              i?.lng ?? i?.longitude ?? i?.location?.lng ?? i?.center?.[0] ?? i?.coordinates?.[0],
+              i?.lat ?? i?.latitude ?? i?.location?.lat ?? i?.center?.[1] ?? i?.coordinates?.[1],
+            ];
+          const lonP = parseFloat(coords?.[0]);
+          const latP = parseFloat(coords?.[1]);
+          if (!Number.isNaN(latP) && !Number.isNaN(lonP)) {
+            lat = latP; lon = lonP;
+          }
+        }
+      } catch {}
+    }
+    return { ...place, latitude: lat, longitude: lon } as Place;
   };
 
   useEffect(() => {
@@ -855,13 +986,6 @@ export default function MapScreen() {
       <Modal
         visible={showListModal}
         animationType="slide"
-        onShow={() => {
-          // When opening list view, fetch fresh list from server for current region
-          setListPage(1);
-          setListHasMore(true);
-          setListPlaces([]);
-          fetchListPlaces({ reset: true });
-        }}
       >
         <View style={styles.modalContainer}>
           <Text style={styles.sectionTitle}>All Places</Text>
@@ -885,6 +1009,11 @@ export default function MapScreen() {
                 <Text style={{ textAlign: "center", paddingVertical: 8 }}>Loading…</Text>
               ) : null
             }
+            ListEmptyComponent={
+              <Text style={{ textAlign: "center", paddingVertical: 12 }}>
+                {listLoading ? "Loading…" : "No places found"}
+              </Text>
+            }
             onViewableItemsChanged={({ viewableItems }) => {
               try {
                 const visible = (viewableItems || []).map((v: any) => v.item).filter(Boolean) as Place[];
@@ -895,18 +1024,21 @@ export default function MapScreen() {
             renderItem={({ item }) => (
               <TouchableOpacity
                 style={styles.placeItem}
-                onPress={() => {
+                onPress={async () => {
                   setShowListModal(false);
-                  openPlaceDetails(item);
-                  mapRef.current?.animateToRegion(
-                    {
-                      latitude: item.latitude,
-                      longitude: item.longitude,
-                      latitudeDelta: 0.01,
-                      longitudeDelta: 0.01,
-                    },
-                    1000
-                  );
+                  const resolved = await resolvePlaceWithCoords(item);
+                  openPlaceDetails(resolved);
+                  if (!Number.isNaN(resolved.latitude) && !Number.isNaN(resolved.longitude)) {
+                    mapRef.current?.animateToRegion(
+                      {
+                        latitude: resolved.latitude,
+                        longitude: resolved.longitude,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                      },
+                      1000
+                    );
+                  }
                 }}
               >
                 <Text style={styles.placeName}>{item.name}</Text>
