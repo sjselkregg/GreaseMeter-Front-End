@@ -1,9 +1,11 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 
 export default function Layout() {
   return (
-    <Tabs
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <Tabs
       screenOptions={{
         headerShown: true,
         headerStyle: { backgroundColor: "orange", shadowColor: "#ccc", elevation: 4 },
@@ -41,6 +43,7 @@ export default function Layout() {
           ),
         }}
       />
-    </Tabs>
+      </Tabs>
+    </SafeAreaProvider>
   );
 }

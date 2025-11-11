@@ -11,6 +11,7 @@ import {
   RefreshControl,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 type User = {
   name: string;
@@ -26,6 +27,7 @@ type Review = {
 };
 
 export default function Account() {
+  const insets = useSafeAreaInsets();
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null);
   const [mode, setMode] = useState<"default" | "signup" | "login">("default");
   const [email, setEmail] = useState("");
@@ -40,20 +42,19 @@ export default function Account() {
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
+  const [editReviews, setEditReviews] = useState(false);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
+  // On app start, ensure no one is signed in
   useEffect(() => {
     (async () => {
       try {
-        const token = await AsyncStorage.getItem("userToken");
-        if (token) {
-          const storedEmail = (await AsyncStorage.getItem("userEmail")) || "";
-          setLoggedInUser({ name: "User", email: storedEmail, token });
-        }
-      } catch (err) {
-        console.error("Error loading saved user:", err);
-      }
+        await AsyncStorage.removeItem("userToken");
+        await AsyncStorage.removeItem("userEmail");
+        await AsyncStorage.removeItem("userName");
+      } catch {}
+      setLoggedInUser(null);
     })();
   }, []);
 
@@ -117,6 +118,7 @@ export default function Account() {
 
       await AsyncStorage.setItem("userToken", data.token);
       await AsyncStorage.setItem("userEmail", data.email || trimmedEmail);
+      await AsyncStorage.setItem("userName", data.name || trimmedName);
       setLoggedInUser({ name: data.name || trimmedName, email: data.email || trimmedEmail, token: data.token });
       setMode("default");
       Alert.alert("Success", "Account created successfully!");
@@ -168,8 +170,10 @@ export default function Account() {
 
       await AsyncStorage.setItem("userToken", data.token);
       const emailFromResponse = data?.email || data?.user?.email || data?.data?.email || "";
+      const nameFromResponse = data?.name || data?.user?.name || data?.data?.name || trimmedName;
       if (emailFromResponse) await AsyncStorage.setItem("userEmail", emailFromResponse);
-      setLoggedInUser({ name: data.name || trimmedName, email: emailFromResponse, token: data.token });
+      if (nameFromResponse) await AsyncStorage.setItem("userName", nameFromResponse);
+      setLoggedInUser({ name: nameFromResponse, email: emailFromResponse, token: data.token });
       setMode("default");
       Alert.alert("Success", `Welcome back, ${data.name || trimmedName}!`);
     } catch (err) {
@@ -183,6 +187,7 @@ export default function Account() {
     try {
       await AsyncStorage.removeItem("userToken");
       await AsyncStorage.removeItem("userEmail");
+      await AsyncStorage.removeItem("userName");
       setLoggedInUser(null);
     } catch (err) {
       console.error("Logout error:", err);
@@ -393,6 +398,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
             onPress={async () => {
               setUserReviewsPage(1);
               setUserReviewsMore(false);
+              setEditReviews(false);
               await fetchUserReviews(1);
               setShowReviews(true);
             }}
@@ -408,10 +414,26 @@ const handleDeleteReview = async (reviewId: number | string) => {
             <Text style={styles.buttonText}>Delete Account</Text>
           </TouchableOpacity>
 
-          <Modal visible={showReviews} animationType="slide">
-            <View style={styles.modalContainer}>
-              <Text style={styles.title}>My Reviews</Text>
+          {showReviews && (
+            <Modal visible animationType="slide" presentationStyle="fullScreen" statusBarTranslucent>
+              <SafeAreaView
+                style={[
+                  styles.modalContainer,
+                  { paddingTop: Math.max(10, insets.top + 8) },
+                ]}
+              >
+              <View style={styles.reviewsHeaderRow}>
+                <Text style={[styles.title, { marginBottom: 0 }]}>My Reviews</Text>
+                <TouchableOpacity
+                  onPress={() => setEditReviews((e) => !e)}
+                  style={styles.headerAction}
+                >
+                  <Text style={styles.headerActionText}>{editReviews ? "Done" : "Edit"}</Text>
+                </TouchableOpacity>
+              </View>
               <FlatList
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 20 }}
                 data={reviews}
                 keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
                 renderItem={({ item }) => (
@@ -424,12 +446,14 @@ const handleDeleteReview = async (reviewId: number | string) => {
                         <Text style={styles.reviewSub}>📍 {item.place_name}</Text>
                       )}
                     </View>
-                    <TouchableOpacity
-                      style={styles.deleteButton}
-                      onPress={() => handleDeleteReview(item.id)}
-                    >
-                      <Text style={styles.deleteButtonText}>Delete</Text>
-                    </TouchableOpacity>
+                    {editReviews && (
+                      <TouchableOpacity
+                        style={styles.deleteButton}
+                        onPress={() => handleDeleteReview(item.id)}
+                      >
+                        <Text style={styles.deleteButtonText}>Delete</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
 
                 )}
@@ -455,11 +479,18 @@ const handleDeleteReview = async (reviewId: number | string) => {
                   ) : null
                 }
               />
-              <TouchableOpacity style={[styles.button, { backgroundColor: "#555" }]} onPress={() => setShowReviews(false)}>
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: "#555" }]}
+                onPress={() => {
+                  setEditReviews(false);
+                  setShowReviews(false);
+                }}
+              >
                 <Text style={styles.buttonText}>Close</Text>
               </TouchableOpacity>
-            </View>
+            </SafeAreaView>
           </Modal>
+          )}
         </>
       ) : mode === "signup" ? (
         <>
@@ -556,9 +587,32 @@ const styles = StyleSheet.create({
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   linkText: { color: "#007AFF", fontSize: 16, marginTop: 5 },
   modalContainer: { flex: 1, backgroundColor: "#fff", padding: 20 },
-  reviewItem: { borderBottomWidth: 1, borderBottomColor: "#eee", paddingVertical: 10 },
+  reviewsHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  reviewItem: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   reviewText: { fontSize: 16, color: "#000" },
   reviewSub: { fontSize: 14, color: "#555" },
+  headerAction: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  headerActionText: {
+    color: "#007AFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
   deleteButton: {
   backgroundColor: "red",
   paddingVertical: 6,
