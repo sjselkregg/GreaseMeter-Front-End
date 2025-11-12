@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
 
 type User = {
   name: string;
@@ -28,6 +29,7 @@ type Review = {
 
 export default function Account() {
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ mode?: string }>();
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null);
   const [mode, setMode] = useState<"default" | "signup" | "login">("default");
   const [email, setEmail] = useState("");
@@ -57,6 +59,13 @@ export default function Account() {
       setLoggedInUser(null);
     })();
   }, []);
+
+  // Respect incoming mode from navigation params (e.g., open login form)
+  useEffect(() => {
+    const m = (params?.mode || "").toString().toLowerCase();
+    if (m === "login") setMode("login");
+    else if (m === "signup") setMode("signup");
+  }, [params?.mode]);
 
   //Sign up
   const handleSignUp = async () => {

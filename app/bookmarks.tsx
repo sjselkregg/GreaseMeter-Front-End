@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 
 type Bookmark = {
   id: number;
@@ -26,6 +27,7 @@ type Review = {
 };
 
 export default function Bookmarks() {
+  const router = useRouter();
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<Bookmark | null>(null);
@@ -35,6 +37,8 @@ export default function Bookmarks() {
   const [recName, setRecName] = useState("");
   const [recAddress, setRecAddress] = useState("");
   const [submittingRec, setSubmittingRec] = useState(false);
+  const [editBookmarks, setEditBookmarks] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -42,12 +46,13 @@ export default function Bookmarks() {
   const fetchBookmarks = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
-      if (!token) {
+      const logged = Boolean(token);
+      setIsLoggedIn(logged);
+      if (!logged) {
         // Clear any previously loaded bookmarks when logged out
         setBookmarks([]);
         setSelectedBookmark(null);
         setReviews([]);
-        Alert.alert("Error", "You must be logged in to see bookmarks.");
         return;
       }
 
@@ -215,7 +220,26 @@ export default function Bookmarks() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>My Bookmarks</Text>
+      {isLoggedIn === false ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ fontSize: 18, color: "#000", textAlign: "center", marginBottom: 12 }}>
+            Sign in to add/view bookmarks!
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: "#007AFF", paddingVertical: 12, paddingHorizontal: 30, borderRadius: 8, marginVertical: 6 }}
+            onPress={() => router.push({ pathname: "/account", params: { mode: "login" } })}
+          >
+            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "bold" }}>Sign In</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+      <View style={styles.headerRow}>
+        <Text style={[styles.title, { marginBottom: 0 }]}>My Bookmarks</Text>
+        <TouchableOpacity style={styles.headerAction} onPress={() => setEditBookmarks((e) => !e)}>
+          <Text style={styles.headerActionText}>{editBookmarks ? "Done" : "Edit"}</Text>
+        </TouchableOpacity>
+      </View>
       <FlatList
         data={bookmarks}
         keyExtractor={(item) => item.id.toString()}
@@ -230,12 +254,14 @@ export default function Bookmarks() {
               <Text style={styles.bookmarkName}>{item.name}</Text>
               {item.address && <Text style={styles.bookmarkAddress}>{item.address}</Text>}
             </View>
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => handleDeleteBookmark(item.id)}
-            >
-              <Text style={styles.deleteButtonText}>Remove</Text>
-            </TouchableOpacity>
+            {editBookmarks && (
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => handleDeleteBookmark(item.id)}
+              >
+                <Text style={styles.deleteButtonText}>Remove</Text>
+              </TouchableOpacity>
+            )}
           </TouchableOpacity>
         )}
         ListEmptyComponent={<Text>No bookmarks yet</Text>}
@@ -325,6 +351,8 @@ export default function Bookmarks() {
           </View>
         </View>
       </Modal>
+      </>
+      )}
     </View>
   );
 }
@@ -332,6 +360,22 @@ export default function Bookmarks() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: "#fff" },
   title: { fontSize: 22, fontWeight: "bold", marginBottom: 12 },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  headerAction: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  headerActionText: {
+    color: "#007AFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
   bookmarkItem: {
     flexDirection: "row",
     alignItems: "center",
