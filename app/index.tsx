@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import MapView, { Marker, Region } from "react-native-maps";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Place = {
   id: number | string;
@@ -35,6 +36,7 @@ type Review = {
 };
 
 export default function MapScreen() {
+  const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
   const [places, setPlaces] = useState<Place[]>([]);
   const [rawPlaces, setRawPlaces] = useState<Place[]>([]);
@@ -850,28 +852,32 @@ export default function MapScreen() {
 
       {/* Search */}
       <View style={styles.searchWrapper}>
-        <TextInput
-          style={styles.searchBar}
-          placeholder="Search places..."
-          placeholderTextColor="#666"
-          value={search}
-          onChangeText={setSearch}
-          onSubmitEditing={fetchPlaces}
-          returnKeyType="search"
-        />
-        {(suggestions.length > 0) && (
-          <TouchableOpacity
-            style={styles.clearButton}
-            onPress={() => {
-              setSuggestions([]);
-              setSearch("");
-              Keyboard.dismiss();
-            }}
-            accessibilityLabel="Clear suggestions"
-          >
-            <Text style={styles.clearButtonText}>✕</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.searchInputContainer}>
+          <TextInput
+            style={styles.searchBar}
+            placeholder="Search places..."
+            placeholderTextColor="#666"
+            value={search}
+            onChangeText={setSearch}
+            onSubmitEditing={fetchPlaces}
+            returnKeyType="search"
+          />
+          {search.trim().length > 0 && (
+            <View style={styles.clearButtonContainer}>
+              <TouchableOpacity
+                style={styles.clearButton}
+                onPress={() => {
+                  setSuggestions([]);
+                  setSearch("");
+                  Keyboard.dismiss();
+                }}
+                accessibilityLabel="Clear search"
+              >
+                <Text style={styles.clearButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
         {suggestions.length > 0 && (
           <View style={styles.suggestionsContainer}>
             <FlatList
@@ -883,7 +889,7 @@ export default function MapScreen() {
                   style={styles.suggestionItem}
                   onPress={() => {
                     setSuggestions([]);
-                    setSearch(item.name || "");
+                    setSearch("");
                     Keyboard.dismiss();
                     mapRef.current?.animateToRegion(
                       {
@@ -986,8 +992,19 @@ export default function MapScreen() {
       <Modal
         visible={showListModal}
         animationType="slide"
+        presentationStyle="fullScreen"
+        statusBarTranslucent
       >
-        <View style={styles.modalContainer}>
+        <SafeAreaView
+          edges={["top", "bottom", "left", "right"]}
+          style={[
+            styles.modalContainer,
+            {
+              paddingTop: Math.max(12, (insets.top || 0) + 8),
+              paddingBottom: Math.max(12, (insets.bottom || 0) + 8),
+            },
+          ]}
+        >
           <Text style={styles.sectionTitle}>All Places</Text>
           <FlatList
             data={listPlaces}
@@ -1014,6 +1031,7 @@ export default function MapScreen() {
                 {listLoading ? "Loading…" : "No places found"}
               </Text>
             }
+            contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 20 }}
             onViewableItemsChanged={({ viewableItems }) => {
               try {
                 const visible = (viewableItems || []).map((v: any) => v.item).filter(Boolean) as Place[];
@@ -1054,7 +1072,7 @@ export default function MapScreen() {
           >
             <Text style={styles.buttonText}>Close</Text>
           </TouchableOpacity>
-        </View>
+        </SafeAreaView>
       </Modal>
 
       {/* Add Review Modal */}
@@ -1131,6 +1149,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
   searchWrapper: { position: "absolute", top: 10, left: 10, right: 10, zIndex: 10 },
+  searchInputContainer: { position: "relative" },
   searchBar: {
     backgroundColor: "#fff",
     paddingVertical: 8,
@@ -1138,15 +1157,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     fontSize: 16,
     elevation: 3,
-    paddingRight: 36,
+    paddingRight: 40,
+  },
+  clearButtonContainer: {
+    position: "absolute",
+    right: 8,
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
   },
   clearButton: {
-    position: "absolute",
-    right: 16,
-    top: 14,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#eee",
