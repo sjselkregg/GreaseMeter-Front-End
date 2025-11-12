@@ -509,6 +509,8 @@ export default function MapScreen() {
     return result;
   };
 
+  // helper not needed after reverting selected marker badge
+
   // Check if a given place is already present in the sampled list
   const placeIncluded = (list: Place[], p?: Place | null): boolean => {
     if (!p) return true;
@@ -891,11 +893,6 @@ export default function MapScreen() {
             tracksViewChanges={false}
           >
             <View style={{ alignItems: "center" }}>
-              {place.rating && place.rating > 0 ? (
-                <View style={styles.markerRatingBubble}>
-                  <Text style={styles.markerRatingText}>⭐ {place.rating.toFixed(1)}</Text>
-                </View>
-              ) : null}
               <View style={styles.markerDot} />
             </View>
           </Marker>
@@ -914,11 +911,6 @@ export default function MapScreen() {
               tracksViewChanges={false}
             >
               <View style={{ alignItems: "center" }}>
-                {selectedPlace.rating && selectedPlace.rating > 0 ? (
-                  <View style={styles.markerRatingBubble}>
-                    <Text style={styles.markerRatingText}>⭐ {selectedPlace.rating.toFixed(1)}</Text>
-                  </View>
-                ) : null}
                 <View style={styles.selectedMarkerDot} />
               </View>
             </Marker>
