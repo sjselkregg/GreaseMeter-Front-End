@@ -57,6 +57,10 @@ export default function MapScreen() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [placeImages, setPlaceImages] = useState<string[]>([]);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [imageViewerIndex, setImageViewerIndex] = useState(0);
+  const imageViewerRef = useRef<FlatList<string> | null>(null);
+  const pinchClosedRef = useRef(false);
 
   const mapRef = useRef<MapView | null>(null);
   const searchTimeoutRef = useRef<any>(null);
@@ -948,8 +952,17 @@ export default function MapScreen() {
                   data={placeImages}
                   keyExtractor={(uri, idx) => `${uri}-${idx}`}
                   showsHorizontalScrollIndicator={false}
-                  renderItem={({ item }) => (
-                    <Image source={{ uri: item }} style={styles.placeImage} />
+                  renderItem={({ item, index }) => (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        const safeIndex = Math.min(Math.max(index, 0), placeImages.length - 1);
+                        setImageViewerIndex(safeIndex);
+                        setImageViewerVisible(true);
+                      }}
+                    >
+                      <Image source={{ uri: item }} style={styles.placeImage} />
+                    </TouchableOpacity>
                   )}
                 />
               </View>
@@ -1072,6 +1085,51 @@ export default function MapScreen() {
           >
             <Text style={styles.buttonText}>Close</Text>
           </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Image Viewer */}
+      <Modal
+        visible={imageViewerVisible}
+        animationType="fade"
+        presentationStyle="fullScreen"
+        statusBarTranslucent
+        onRequestClose={() => setImageViewerVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#000" }} edges={["top", "bottom", "left", "right"]}>
+          <TouchableOpacity
+            style={[styles.imageCloseButton, { top: Math.max(28, (insets.top || 0) + 16) }]}
+            onPress={() => setImageViewerVisible(false)}
+          >
+            <Text style={styles.imageCloseText}>Close</Text>
+          </TouchableOpacity>
+          <FlatList
+            ref={(r) => (imageViewerRef.current = r)}
+            data={placeImages}
+            keyExtractor={(uri, idx) => `${uri}-${idx}`}
+            horizontal
+            pagingEnabled
+            initialScrollIndex={Math.min(Math.max(imageViewerIndex, 0), Math.max(placeImages.length - 1, 0))}
+            getItemLayout={(data, index) => ({
+              length: Dimensions.get("window").width,
+              offset: Dimensions.get("window").width * index,
+              index,
+            })}
+            renderItem={({ item }) => (
+              <View style={{ width: Dimensions.get("window").width, flex: 1, justifyContent: "center", alignItems: "center" }}>
+                <Image source={{ uri: item }} style={styles.fullscreenImage} resizeMode="contain" />
+              </View>
+            )}
+            onMomentumScrollEnd={(e) => {
+              const w = Dimensions.get("window").width;
+              const idx = Math.round(e.nativeEvent.contentOffset.x / w);
+              setImageViewerIndex(idx);
+            }}
+            showsHorizontalScrollIndicator={false}
+          />
+          <View style={styles.imageIndexBadge}>
+            <Text style={styles.imageIndexText}>{`${imageViewerIndex + 1} / ${Math.max(placeImages.length, 1)}`}</Text>
+          </View>
         </SafeAreaView>
       </Modal>
 
@@ -1211,6 +1269,28 @@ const styles = StyleSheet.create({
   placeAddress: { fontSize: 14, color: "#555", marginBottom: 12 },
   imagesContainer: { marginBottom: 12 },
   placeImage: { width: 160, height: 100, borderRadius: 8, marginRight: 8, backgroundColor: "#eee" },
+  fullscreenImage: { width: "100%", height: "100%" },
+  imageCloseButton: {
+    position: "absolute",
+    right: 16,
+    top: 12,
+    zIndex: 10,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  imageCloseText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  imageIndexBadge: {
+    position: "absolute",
+    bottom: 16,
+    alignSelf: "center",
+    backgroundColor: "rgba(0,0,0,0.4)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  imageIndexText: { color: "#fff", fontWeight: "600" },
   placeRating: { fontSize: 16, color: "#f39c12", fontWeight: "bold" },
   sectionTitle: { fontSize: 16, fontWeight: "bold", marginTop: 10 },
   review: { paddingVertical: 4 },
