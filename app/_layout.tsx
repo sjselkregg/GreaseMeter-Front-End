@@ -22,6 +22,7 @@ export default function Layout() {
       <Tabs.Screen
         name="bookmarks"       
         options={{
+          tabBarLabel: "Bookmarks",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="bookmark-outline" size={size} color={color} />
           ),
@@ -30,6 +31,7 @@ export default function Layout() {
       <Tabs.Screen
         name="index"           
         options={{
+          tabBarLabel: "Map",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="map-outline" size={size} color={color} />
           ),
@@ -38,6 +40,7 @@ export default function Layout() {
       <Tabs.Screen
         name="account"       
         options={{
+          tabBarLabel: "Account",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person-outline" size={size} color={color} />
           ),

@@ -1212,22 +1212,30 @@ export default function MapScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.sectionTitle}>Write a Review</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Your review..."
-              placeholderTextColor="#666"
-              value={reviewText}
-              onChangeText={setReviewText}
-              multiline
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Rating (1-5)"
-              keyboardType="numeric"
-              placeholderTextColor="#666"
-              value={reviewRating}
-              onChangeText={setReviewRating}
-            />
+          <TextInput
+            style={styles.input}
+            placeholder="Your review..."
+            placeholderTextColor="#666"
+            value={reviewText}
+            onChangeText={setReviewText}
+            multiline
+          />
+          <View style={styles.ratingRow}>
+            {([1, 2, 3, 4, 5] as const).map((n) => {
+              const selected = String(n) === String(reviewRating);
+              return (
+                <TouchableOpacity
+                  key={n}
+                  onPress={() => setReviewRating(String(n))}
+                  style={[styles.ratingButton, selected && styles.ratingButtonSelected]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Rate ${n}`}
+                >
+                  <Text style={[styles.ratingButtonText, selected && { color: "#fff" }]}>{n}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
             <View style={styles.buttonRow}>
               <TouchableOpacity
                 style={[styles.actionButton, { backgroundColor: "#555" }]}
@@ -1445,5 +1453,31 @@ const styles = StyleSheet.create({
     padding: 8,
     marginBottom: 8,
     backgroundColor: "#fff",
+  },
+  ratingRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  ratingButton: {
+    flex: 1,
+    marginHorizontal: 4,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    backgroundColor: "#f5f5f5",
+    alignItems: "center",
+  },
+  ratingButtonSelected: {
+    backgroundColor: "orange",
+    borderColor: "orange",
+  },
+  ratingButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
   },
 });
