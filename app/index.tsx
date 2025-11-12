@@ -60,6 +60,7 @@ export default function MapScreen() {
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
   const imageViewerRef = useRef<FlatList<string> | null>(null);
+  const geocodeCacheRef = useRef<Map<string, { lat: number; lon: number }>>(new Map());
   const pinchClosedRef = useRef(false);
 
   const mapRef = useRef<MapView | null>(null);
@@ -423,6 +424,35 @@ export default function MapScreen() {
         }
       } catch {}
     }
+    // Fallback: geocode by address if still missing
+    if ((Number.isNaN(lat) || Number.isNaN(lon))) {
+      const addr = (place.address || "").trim();
+      const query = addr || `${place.name || ""}`.trim();
+      if (query) {
+        try {
+          // Check cache first
+          const cached = geocodeCacheRef.current.get(query);
+          if (cached) {
+            lat = cached.lat; lon = cached.lon;
+          } else {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+            const r = await fetch(url, { headers: { Accept: "application/json" } });
+            if (r.ok) {
+              const arr = await r.json();
+              if (Array.isArray(arr) && arr.length > 0) {
+                const first = arr[0];
+                const glat = parseFloat(first?.lat);
+                const glon = parseFloat(first?.lon);
+                if (!Number.isNaN(glat) && !Number.isNaN(glon)) {
+                  lat = glat; lon = glon;
+                  geocodeCacheRef.current.set(query, { lat: glat, lon: glon });
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    }
     return { ...place, latitude: lat, longitude: lon } as Place;
   };
 
@@ -479,6 +509,27 @@ export default function MapScreen() {
     return result;
   };
 
+  // Check if a given place is already present in the sampled list
+  const placeIncluded = (list: Place[], p?: Place | null): boolean => {
+    if (!p) return true;
+    const pid = p.id;
+    const lat = p.latitude;
+    const lon = p.longitude;
+    for (const it of list) {
+      if (pid != null && it.id === pid) return true;
+      // If no reliable id, compare coordinates approximately
+      if (
+        typeof lat === "number" && typeof lon === "number" &&
+        !Number.isNaN(lat) && !Number.isNaN(lon) &&
+        Math.abs((it.latitude ?? 0) - lat) < 1e-5 &&
+        Math.abs((it.longitude ?? 0) - lon) < 1e-5
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   useEffect(() => {
     setPlaces(samplePlacesForRegion(rawPlaces, region));
   }, [rawPlaces, region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta]);
@@ -523,12 +574,10 @@ export default function MapScreen() {
                 p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
                 p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
               ];
-            let lon = parseFloat(coords?.[0]);
-            let lat = parseFloat(coords?.[1]);
-            if (isNaN(lat) || isNaN(lon)) {
-              lat = region.latitude;
-              lon = region.longitude;
-            }
+            const lonRaw = parseFloat(coords?.[0]);
+            const latRaw = parseFloat(coords?.[1]);
+            const lon = isNaN(lonRaw) ? Number.NaN : lonRaw;
+            const lat = isNaN(latRaw) ? Number.NaN : latRaw;
 
             const base: Place = {
               id:
@@ -834,24 +883,46 @@ export default function MapScreen() {
         initialRegion={initialRegion}
         onRegionChangeComplete={(r) => setRegion(r)}
       >
-        {places.map((place, idx) => (
+        {places.map((place) => (
           <Marker
-            key={`${place.id}-${place.latitude}-${place.longitude}-${idx}`}
+            key={String(place.id ?? `${place.latitude},${place.longitude}`)}
             coordinate={{ latitude: place.latitude, longitude: place.longitude }}
             onPress={() => openPlaceDetails(place)}
+            tracksViewChanges={false}
           >
             <View style={{ alignItems: "center" }}>
               {place.rating && place.rating > 0 ? (
                 <View style={styles.markerRatingBubble}>
-                  <Text style={styles.markerRatingText}>
-                    ⭐ {place.rating.toFixed(1)}
-                  </Text>
+                  <Text style={styles.markerRatingText}>⭐ {place.rating.toFixed(1)}</Text>
                 </View>
               ) : null}
               <View style={styles.markerDot} />
             </View>
           </Marker>
         ))}
+
+        {/* Ensure the currently selected place is always visible as a marker */}
+        {selectedPlace &&
+          typeof selectedPlace.latitude === "number" &&
+          typeof selectedPlace.longitude === "number" &&
+          !Number.isNaN(selectedPlace.latitude) &&
+          !Number.isNaN(selectedPlace.longitude) &&
+          !placeIncluded(places, selectedPlace) && (
+            <Marker
+              key={`selected-${String(selectedPlace.id ?? `${selectedPlace.latitude},${selectedPlace.longitude}`)}`}
+              coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
+              tracksViewChanges={false}
+            >
+              <View style={{ alignItems: "center" }}>
+                {selectedPlace.rating && selectedPlace.rating > 0 ? (
+                  <View style={styles.markerRatingBubble}>
+                    <Text style={styles.markerRatingText}>⭐ {selectedPlace.rating.toFixed(1)}</Text>
+                  </View>
+                ) : null}
+                <View style={styles.selectedMarkerDot} />
+              </View>
+            </Marker>
+          )}
       </MapView>
 
       {/* Search */}
@@ -891,20 +962,23 @@ export default function MapScreen() {
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.suggestionItem}
-                  onPress={() => {
+                  onPress={async () => {
                     setSuggestions([]);
                     setSearch("");
                     Keyboard.dismiss();
-                    mapRef.current?.animateToRegion(
-                      {
-                        latitude: item.latitude,
-                        longitude: item.longitude,
-                        latitudeDelta: 0.01,
-                        longitudeDelta: 0.01,
-                      },
-                      600
-                    );
-                    openPlaceDetails(item);
+                    const resolved = await resolvePlaceWithCoords(item);
+                    if (!Number.isNaN(resolved.latitude) && !Number.isNaN(resolved.longitude)) {
+                      mapRef.current?.animateToRegion(
+                        {
+                          latitude: resolved.latitude,
+                          longitude: resolved.longitude,
+                          latitudeDelta: 0.01,
+                          longitudeDelta: 0.01,
+                        },
+                        800
+                      );
+                    }
+                    openPlaceDetails(resolved);
                   }}
                 >
                   <Text style={styles.suggestionName}>{item.name}</Text>
@@ -1058,7 +1132,6 @@ export default function MapScreen() {
                 onPress={async () => {
                   setShowListModal(false);
                   const resolved = await resolvePlaceWithCoords(item);
-                  openPlaceDetails(resolved);
                   if (!Number.isNaN(resolved.latitude) && !Number.isNaN(resolved.longitude)) {
                     mapRef.current?.animateToRegion(
                       {
@@ -1067,9 +1140,10 @@ export default function MapScreen() {
                         latitudeDelta: 0.01,
                         longitudeDelta: 0.01,
                       },
-                      1000
+                      800
                     );
                   }
+                  openPlaceDetails(resolved);
                 }}
               >
                 <Text style={styles.placeName}>{item.name}</Text>
@@ -1341,6 +1415,14 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     backgroundColor: "orange",
     borderWidth: 1.5,
+    borderColor: "#fff",
+  },
+  selectedMarkerDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#007AFF",
+    borderWidth: 2,
     borderColor: "#fff",
   },
   modalOverlay: {
