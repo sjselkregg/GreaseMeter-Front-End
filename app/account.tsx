@@ -16,7 +16,6 @@ import { useLocalSearchParams } from "expo-router";
 
 type User = {
   name: string;
-  email: string;
   token: string;
 };
 
@@ -56,7 +55,6 @@ export default function Account() {
     (async () => {
       try {
         await AsyncStorage.removeItem("userToken");
-        await AsyncStorage.removeItem("userEmail");
         await AsyncStorage.removeItem("userName");
       } catch {}
       setLoggedInUser(null);
@@ -129,9 +127,8 @@ export default function Account() {
       }
 
       await AsyncStorage.setItem("userToken", data.token);
-      await AsyncStorage.setItem("userEmail", data.email || trimmedEmail);
       await AsyncStorage.setItem("userName", data.name || trimmedName);
-      setLoggedInUser({ name: data.name || trimmedName, email: data.email || trimmedEmail, token: data.token });
+      setLoggedInUser({ name: data.name || trimmedName, token: data.token });
       setMode("default");
       Alert.alert("Success", "Account created successfully!");
     } catch (err) {
@@ -181,11 +178,9 @@ export default function Account() {
       }
 
       await AsyncStorage.setItem("userToken", data.token);
-      const emailFromResponse = data?.email || data?.user?.email || data?.data?.email || "";
       const nameFromResponse = data?.name || data?.user?.name || data?.data?.name || trimmedName;
-      if (emailFromResponse) await AsyncStorage.setItem("userEmail", emailFromResponse);
       if (nameFromResponse) await AsyncStorage.setItem("userName", nameFromResponse);
-      setLoggedInUser({ name: nameFromResponse, email: emailFromResponse, token: data.token });
+      setLoggedInUser({ name: nameFromResponse, token: data.token });
       setMode("default");
       Alert.alert("Success", `Welcome back, ${data.name || trimmedName}!`);
     } catch (err) {
@@ -198,7 +193,6 @@ export default function Account() {
   const handleLogout = async () => {
     try {
       await AsyncStorage.removeItem("userToken");
-      await AsyncStorage.removeItem("userEmail");
       await AsyncStorage.removeItem("userName");
       setLoggedInUser(null);
     } catch (err) {
@@ -304,6 +298,8 @@ export default function Account() {
       Alert.alert("Error", "Network issue while fetching reviews.");
     }
   }, []);
+
+  // No email fetching post-login
 
   // Enrich reviews with place names if missing
   const enrichReviewPlaces = useCallback(async (list: Review[]) => {
@@ -443,12 +439,11 @@ const handleDeleteReview = async (reviewId: number | string) => {
     <View style={styles.container}>
       {loggedInUser ? (
         <>
-          <Text style={styles.title}>Account Info</Text>
-          <Text style={styles.infoItem}>👤 {loggedInUser.name}</Text>
-          <Text style={styles.infoItem}>📧 {loggedInUser.email}</Text>
+          <Text style={styles.title}>WELCOME, {loggedInUser.name}!</Text>
+          <Text style={styles.infoItem}>TIME TO GET GREASY</Text>
 
           <TouchableOpacity
-            style={styles.button}
+            style={[styles.button, styles.fullWidthButton]}
             onPress={async () => {
               setUserReviewsPage(1);
               setUserReviewsMore(false);
@@ -460,11 +455,11 @@ const handleDeleteReview = async (reviewId: number | string) => {
             <Text style={styles.buttonText}>View My Reviews</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#555" }]} onPress={handleLogout}>
+          <TouchableOpacity style={[styles.button, styles.fullWidthButton, { backgroundColor: "#555" }]} onPress={handleLogout}>
             <Text style={styles.buttonText}>Log Out</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.button, { backgroundColor: "red" }]} onPress={handleDeleteAccount}>
+          <TouchableOpacity style={[styles.button, styles.fullWidthButton, { backgroundColor: "red" }]} onPress={handleDeleteAccount}>
             <Text style={styles.buttonText}>Delete Account</Text>
           </TouchableOpacity>
 
@@ -635,6 +630,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   button: { backgroundColor: "#007AFF", paddingVertical: 12, paddingHorizontal: 30, borderRadius: 8, marginVertical: 6 },
+  fullWidthButton: { alignSelf: "stretch" },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   linkText: { color: "#007AFF", fontSize: 16, marginTop: 5 },
   modalContainer: { flex: 1, backgroundColor: "#fff", padding: 20 },
