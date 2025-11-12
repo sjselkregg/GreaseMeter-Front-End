@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ type Review = {
   text: string;
   rating: number;
   place_name?: string;
+  place_id?: number | string;
 };
 
 export default function Account() {
@@ -45,6 +46,8 @@ export default function Account() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
   const [editReviews, setEditReviews] = useState(false);
+  const reviewPlaceNameCacheRef = useRef<Map<string | number, string>>(new Map());
+  const reviewPlaceInFlightRef = useRef<Set<string | number>>(new Set());
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -274,23 +277,65 @@ export default function Account() {
         ? data.results
         : [];
 
-      const mapped: Review[] = (rawItems as any[]).map((r: any, i) => ({
-        id: r?.id ?? i,
-        text: r?.text ?? "",
-        rating: typeof r?.rating === "number" ? r.rating : parseFloat(r?.rating ?? 0) || 0,
-        place_name: r?.place_name ?? r?.place?.name ?? undefined,
-      }));
+      const mapped: Review[] = (rawItems as any[]).map((r: any, i) => {
+        const pid =
+          r?.place_id ?? r?.placeId ?? r?.place?.id ?? r?.gm_place_id ?? r?.google_place_id ?? r?.placeID;
+        const pname =
+          // According to curl.txt, user reviews return { id, name (place name), rating, text, time }
+          r?.name ?? r?.place_name ?? r?.placeName ?? r?.place_title ?? r?.place?.name ?? r?.place?.title ?? undefined;
+        return {
+          id: r?.id ?? i,
+          text: r?.text ?? "",
+          rating: typeof r?.rating === "number" ? r.rating : parseFloat(r?.rating ?? 0) || 0,
+          place_name: pname,
+          place_id: pid,
+        };
+      });
 
       if (page > 1) setReviews((prev) => [...prev, ...mapped]);
       else setReviews(mapped);
 
       setUserReviewsMore(Boolean((data && data.more === true) || (data?.data && data.data.more === true)));
       setUserReviewsPage(page);
+      // Try to enrich missing place names in the background
+      try { await enrichReviewPlaces(mapped); } catch {}
     } catch (err) {
       console.error("Error fetching reviews:", err);
       Alert.alert("Error", "Network issue while fetching reviews.");
     }
   }, []);
+
+  // Enrich reviews with place names if missing
+  const enrichReviewPlaces = useCallback(async (list: Review[]) => {
+    const candidates = (list || []).filter(Boolean).slice(0, 40);
+    for (const r of candidates) {
+      const pid = r?.place_id;
+      if (!pid) continue;
+      if (r.place_name) continue;
+      if (reviewPlaceNameCacheRef.current.has(pid)) {
+        const name = reviewPlaceNameCacheRef.current.get(pid);
+        if (name) setReviews((prev) => prev.map((it) => (it.id === r.id ? { ...it, place_name: name } : it)));
+        continue;
+      }
+      if (reviewPlaceInFlightRef.current.has(pid)) continue;
+      reviewPlaceInFlightRef.current.add(pid);
+      try {
+        const pidStr = typeof pid === "string" ? pid : String(pid);
+        const res = await fetch(`${API_BASE}/places/${pidStr}/meta`, { headers: { "Content-Type": "application/json" } });
+        if (!res.ok) continue;
+        const meta = await res.json();
+        const m = meta?.data ?? meta;
+        const name: string | undefined = m?.name || m?.title || m?.place_name || m?.placeTitle;
+        if (name && name.trim()) {
+          reviewPlaceNameCacheRef.current.set(pid, name);
+          setReviews((prev) => prev.map((it) => (it.id === r.id ? { ...it, place_name: name } : it)));
+        }
+      } catch {}
+      finally {
+        reviewPlaceInFlightRef.current.delete(pid);
+      }
+    }
+  }, [API_BASE]);
 
 
   //delete a review
@@ -447,13 +492,10 @@ const handleDeleteReview = async (reviewId: number | string) => {
                 keyExtractor={(item, i) => item.id?.toString() ?? i.toString()}
                 renderItem={({ item }) => (
                   <View style={styles.reviewItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.reviewText}>
-                      ⭐ {item.rating} — {item.text}
-                    </Text>
-                      {item.place_name && (
-                        <Text style={styles.reviewSub}>📍 {item.place_name}</Text>
-                      )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.reviewText} numberOfLines={3}>
+                        ⭐ {item.rating} - {item.place_name || "Unknown"} - {item.text}
+                      </Text>
                     </View>
                     {editReviews && (
                       <TouchableOpacity
