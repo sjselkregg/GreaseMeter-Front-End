@@ -45,6 +45,10 @@ export default function Account() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
   const [editReviews, setEditReviews] = useState(false);
+  const [showRecommendModal, setShowRecommendModal] = useState(false);
+  const [recName, setRecName] = useState("");
+  const [recAddress, setRecAddress] = useState("");
+  const [submittingRec, setSubmittingRec] = useState(false);
   const reviewPlaceNameCacheRef = useRef<Map<string | number, string>>(new Map());
   const reviewPlaceInFlightRef = useRef<Set<string | number>>(new Set());
 
@@ -229,6 +233,52 @@ export default function Account() {
       Alert.alert("Error", "Could not request password reset.");
     } finally {
       setForgotSubmitting(false);
+    }
+  };
+
+  // Submit recommendation
+  const handleSubmitRecommendation = async () => {
+    const name = recName.trim();
+    const address = recAddress.trim();
+    if (!name || !address) {
+      Alert.alert("Missing Info", "Please enter both name and address.");
+      return;
+    }
+    try {
+      setSubmittingRec(true);
+      const token = await AsyncStorage.getItem("userToken");
+      if (!token) {
+        Alert.alert("Error", "You must be logged in to recommend a place.");
+        return;
+      }
+      const res = await fetch(`${API_BASE}/recommendations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name, address }),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        console.log("Recommend place error:", text);
+        let message = "Failed to submit recommendation.";
+        try {
+          const err = JSON.parse(text);
+          message = err.error || err.message || message;
+        } catch {}
+        Alert.alert("Error", message);
+        return;
+      }
+      setShowRecommendModal(false);
+      setRecName("");
+      setRecAddress("");
+      Alert.alert("Thank you!", "Your recommendation has been submitted.");
+    } catch (err) {
+      console.error("Error recommending place:", err);
+      Alert.alert("Error", "Network issue while submitting recommendation.");
+    } finally {
+      setSubmittingRec(false);
     }
   };
 
@@ -455,6 +505,13 @@ const handleDeleteReview = async (reviewId: number | string) => {
             <Text style={styles.buttonText}>View My Reviews</Text>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={[styles.button, styles.fullWidthButton]}
+            onPress={() => setShowRecommendModal(true)}
+          >
+            <Text style={styles.buttonText}>Recommend a Place</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={[styles.button, styles.fullWidthButton, { backgroundColor: "#555" }]} onPress={handleLogout}>
             <Text style={styles.buttonText}>Log Out</Text>
           </TouchableOpacity>
@@ -536,7 +593,53 @@ const handleDeleteReview = async (reviewId: number | string) => {
               </TouchableOpacity>
             </SafeAreaView>
           </Modal>
+
           )}
+          {/* Recommend a Place Modal */}
+          <Modal visible={showRecommendModal} animationType="slide">
+            <SafeAreaView
+              style={[styles.modalContainer, styles.centeredModal]}
+              edges={["top", "bottom", "left", "right"]}
+            >
+              <View style={{ alignSelf: "stretch" }}>
+                <Text style={[styles.title, { textAlign: "center" }]}>Recommend a Place</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Place name"
+                  placeholderTextColor="#666"
+                  value={recName}
+                  onChangeText={setRecName}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Address"
+                  placeholderTextColor="#666"
+                  value={recAddress}
+                  onChangeText={setRecAddress}
+                />
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <TouchableOpacity
+                    style={[styles.button, { backgroundColor: "#555", flex: 1, marginRight: 6 }]}
+                    onPress={() => {
+                      setShowRecommendModal(false);
+                      setRecName("");
+                      setRecAddress("");
+                    }}
+                    disabled={submittingRec}
+                  >
+                    <Text style={styles.buttonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.button, { flex: 1, marginLeft: 6 }]}
+                    onPress={handleSubmitRecommendation}
+                    disabled={submittingRec}
+                  >
+                    <Text style={styles.buttonText}>{submittingRec ? "Submitting..." : "Submit"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </SafeAreaView>
+          </Modal>
         </>
       ) : mode === "signup" ? (
         <>
@@ -620,7 +723,8 @@ const styles = StyleSheet.create({
   infoItem: { fontSize: 16, color: "#000", marginBottom: 5 },
   text: { fontSize: 18, marginBottom: 20, textAlign: "center", color: "#000" },
   input: {
-    width: "80%",
+    alignSelf: "stretch",
+    width: "100%",
     height: 50,
     borderColor: "#ccc",
     borderWidth: 1,
@@ -634,6 +738,7 @@ const styles = StyleSheet.create({
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   linkText: { color: "#007AFF", fontSize: 16, marginTop: 5 },
   modalContainer: { flex: 1, backgroundColor: "#fff", padding: 20 },
+  centeredModal: { justifyContent: "center" },
   reviewsHeaderRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -10,6 +10,7 @@ import {
   RefreshControl,
   TextInput,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
@@ -27,6 +28,7 @@ type Review = {
 };
 
 export default function Bookmarks() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -265,21 +267,18 @@ export default function Bookmarks() {
           </TouchableOpacity>
         )}
         ListEmptyComponent={<Text>No bookmarks yet</Text>}
-        ListFooterComponent={
-          <View style={{ paddingVertical: 16 }}>
-            <TouchableOpacity
-              style={[styles.closeButton, { backgroundColor: "#007AFF" }]}
-              onPress={() => setShowRecommendModal(true)}
-            >
-              <Text style={styles.closeButtonText}>Recommend a Place</Text>
-            </TouchableOpacity>
-          </View>
-        }
+        ListFooterComponent={<View style={{ paddingVertical: 16 }} />}
       />
 
       {/* Modal for bookmark details */}
-      <Modal visible={showModal} animationType="slide">
-        <View style={styles.modalContainer}>
+      <Modal visible={showModal} animationType="slide" presentationStyle="fullScreen" statusBarTranslucent>
+        <SafeAreaView
+          style={[
+            styles.modalContainer,
+            { paddingTop: Math.max(36, (insets.top || 0) + 20) },
+          ]}
+          edges={["top", "bottom", "left", "right"]}
+        >
           {selectedBookmark && (
             <>
               <Text style={styles.modalTitle}>{selectedBookmark.name}</Text>
@@ -309,48 +308,10 @@ export default function Bookmarks() {
               </TouchableOpacity>
             </>
           )}
-        </View>
+        </SafeAreaView>
       </Modal>
 
-      {/* Recommend a Place Modal */}
-      <Modal visible={showRecommendModal} animationType="slide">
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Recommend a Place</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Place name"
-            placeholderTextColor="#666"
-            value={recName}
-            onChangeText={setRecName}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Address"
-            placeholderTextColor="#666"
-            value={recAddress}
-            onChangeText={setRecAddress}
-          />
-          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-            <TouchableOpacity
-              style={[styles.closeButton, { backgroundColor: "#555", flex: 1, marginRight: 8 }]}
-              onPress={() => {
-                setShowRecommendModal(false);
-                setRecName("");
-                setRecAddress("");
-              }}
-            >
-              <Text style={styles.closeButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.closeButton, { backgroundColor: "#007AFF", flex: 1, marginLeft: 8 }]}
-              onPress={handleSubmitRecommendation}
-              disabled={submittingRec}
-            >
-              <Text style={styles.closeButtonText}>{submittingRec ? "Submitting..." : "Submit"}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* Recommend a Place Modal moved to Account screen */}
       </>
       )}
     </View>
