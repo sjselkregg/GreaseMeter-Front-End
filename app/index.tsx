@@ -19,6 +19,8 @@ import MapView, { Marker, Region } from "react-native-maps";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+type PlaceOrigin = "map" | "list" | "search" | "bookmark";
+
 type Place = {
   id: number | string;
   name: string;
@@ -26,6 +28,8 @@ type Place = {
   longitude: number;
   address?: string;
   rating?: number;
+  images?: string[];
+  origin?: PlaceOrigin;
 };
 
 type Review = {
@@ -34,6 +38,10 @@ type Review = {
   rating: number;
   name?: string; // review author's username
 };
+
+type PlaceDetailRoute = "map" | "list" | "meta";
+
+const API_BASE = "https://api.greasemeter.live/v1";
 
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
@@ -66,10 +74,117 @@ export default function MapScreen() {
   const mapRef = useRef<MapView | null>(null);
   const searchTimeoutRef = useRef<any>(null);
   const searchQueryIdRef = useRef(0);
-  const metaCacheRef = useRef<
-    Map<string | number, { name?: string; address?: string; rating?: number }>
-  >(new Map());
+  const metaCacheRef = useRef<Map<string | number, Partial<Place>>>(new Map());
   const metaInFlightRef = useRef<Set<string | number>>(new Set());
+
+  const getDetailRouteForPlace = (
+    place: Place,
+    override?: PlaceDetailRoute
+  ): PlaceDetailRoute => {
+    if (override) return override;
+    switch (place?.origin) {
+      case "list":
+        return "list";
+      case "search":
+      case "bookmark":
+        return "meta";
+      default:
+        return "map";
+    }
+  };
+
+  const extractCoordsFromPayload = (payload: any): { latitude?: number; longitude?: number } => {
+    try {
+      const coords =
+        payload?.point?.coordinates ??
+        payload?.geometry?.coordinates ??
+        [
+          payload?.lng ??
+            payload?.longitude ??
+            payload?.location?.lng ??
+            payload?.center?.[0] ??
+            payload?.coordinates?.[0],
+          payload?.lat ??
+            payload?.latitude ??
+            payload?.location?.lat ??
+            payload?.center?.[1] ??
+            payload?.coordinates?.[1],
+        ];
+      const lon = parseFloat(coords?.[0]);
+      const lat = parseFloat(coords?.[1]);
+      const patch: { latitude?: number; longitude?: number } = {};
+      if (!Number.isNaN(lat)) patch.latitude = lat;
+      if (!Number.isNaN(lon)) patch.longitude = lon;
+      return patch;
+    } catch {
+      return {};
+    }
+  };
+
+  const extractImageUrls = (payload: any): string[] => {
+    const candidates = [
+      Array.isArray(payload?.images) ? payload.images : undefined,
+      Array.isArray(payload?.data?.images) ? payload.data.images : undefined,
+      Array.isArray(payload?.items) ? payload.items : undefined,
+      Array.isArray(payload?.data) ? payload.data : undefined,
+      Array.isArray(payload) ? payload : undefined,
+    ];
+    const arr = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
+    return arr
+      .map((it) =>
+        typeof it === "string" ? it : it?.url ?? it?.src ?? it?.image ?? it?.link ?? null
+      )
+      .filter((u): u is string => typeof u === "string" && !!u);
+  };
+
+  const applyPlacePatch = (placeId: Place["id"], patch: Partial<Place>) => {
+    if (!placeId || !patch) return;
+    const { origin: _origin, ...rest } = patch;
+    if (!Object.keys(rest).length) return;
+    const cached = metaCacheRef.current.get(placeId) ?? {};
+    metaCacheRef.current.set(placeId, { ...cached, ...rest });
+    setRawPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...rest } : it)));
+    setListPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...rest } : it)));
+    setSuggestions((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...rest } : it)));
+    setSelectedPlace((prev) => (prev && prev.id === placeId ? { ...prev, ...rest } : prev));
+  };
+
+  const fetchPlaceDetails = async (
+    place: Place,
+    routeOverride?: PlaceDetailRoute
+  ): Promise<{ patch: Partial<Place>; images: string[] } | null> => {
+    const placeId = place?.id;
+    if (placeId == null) return null;
+    const pidStr = typeof placeId === "string" ? placeId : String(placeId);
+    if (!pidStr || pidStr.includes(",")) return null;
+    const route = getDetailRouteForPlace(place, routeOverride);
+    try {
+      const res = await fetch(`${API_BASE}/places/${pidStr}/${route}`, {
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) return null;
+      const raw = await res.json();
+      const payload = raw?.data ?? raw;
+      const patch: Partial<Place> = {};
+      if (route === "map") {
+        if (typeof payload?.name === "string" && payload.name.trim()) patch.name = payload.name;
+        if (typeof payload?.address === "string" && payload.address.trim()) {
+          patch.address = payload.address;
+        }
+      }
+      if (typeof payload?.rating === "number" && !Number.isNaN(payload.rating)) {
+        patch.rating = payload.rating;
+      }
+      Object.assign(patch, extractCoordsFromPayload(payload));
+      const images = extractImageUrls(payload);
+      if (images.length) {
+        patch.images = images;
+      }
+      return { patch, images };
+    } catch {
+      return null;
+    }
+  };
 
   const screenHeight = Dimensions.get("window").height;
   const initialRegion: Region = {
@@ -162,6 +277,7 @@ export default function MapScreen() {
             longitude: lon,
             address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
             rating: parseFloat(p.avg_rating ?? p.rating ?? 0),
+            origin: "map",
           };
           const cached = metaCacheRef.current.get(base.id);
           return cached ? { ...base, ...cached } : base;
@@ -225,6 +341,7 @@ export default function MapScreen() {
             longitude: isNaN(lon) ? Number.NaN : lon,
             address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
             rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
+            origin: "list",
           };
           // Merge any cached meta immediately for better list UX
           const cached = metaCacheRef.current.get(base.id);
@@ -268,6 +385,7 @@ export default function MapScreen() {
                 longitude: isNaN(lon) ? Number.NaN : lon,
                 address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
                 rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
+                origin: "map",
               };
               const cached = metaCacheRef.current.get(base.id);
               return cached ? { ...base, ...cached } : base;
@@ -315,59 +433,27 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showListModal]);
 
-  // Fetch meta for places lacking name/address and patch results into state
+  // Fetch detail data for map markers lacking readable name/address
   const enrichPlacesMeta = async (list: Place[]) => {
     const candidates = list.slice(0, 40); // cap to avoid overfetching
     for (const p of candidates) {
-      if (!p) continue;
-      const needs = !p.name || p.name === "Unnamed Place" || !p.address;
+      if (!p || p.id == null) continue;
+      if (p.origin && p.origin !== "map") continue;
+      const cached = metaCacheRef.current.get(p.id);
+      const nameCandidate = cached?.name ?? p.name;
+      const addressCandidate = cached?.address ?? p.address;
+      const needs = !nameCandidate || nameCandidate === "Unnamed Place" || !addressCandidate;
       if (!needs) continue;
-      const pidStr = typeof p.id === 'string' ? p.id : String(p.id);
-      if (!pidStr || (typeof pidStr === 'string' && pidStr.includes(','))) {
-        // Skip if we don't have a real place id
-        continue;
-      }
-      if (metaCacheRef.current.has(p.id) || metaInFlightRef.current.has(p.id)) continue;
+      if (metaInFlightRef.current.has(p.id)) continue;
       metaInFlightRef.current.add(p.id);
       try {
-        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/meta`, {
-          headers: { "Content-Type": "application/json" },
-        });
-        if (!res.ok) continue;
-        const meta = await res.json();
-        const m = meta?.data ?? meta;
-        const patch: Partial<Place> = {};
-        if (typeof m?.name === "string" && m.name.trim()) patch.name = m.name;
-        if (typeof m?.address === "string" && m.address.trim()) patch.address = m.address;
-        if (typeof m?.rating === "number") patch.rating = m.rating;
-        // Also patch coordinates if present
-        try {
-          const coords =
-            m?.point?.coordinates ??
-            m?.geometry?.coordinates ??
-            [
-              m?.lng ?? m?.longitude ?? m?.location?.lng ?? m?.center?.[0] ?? m?.coordinates?.[0],
-              m?.lat ?? m?.latitude ?? m?.location?.lat ?? m?.center?.[1] ?? m?.coordinates?.[1],
-            ];
-          const lon = parseFloat(coords?.[0]);
-          const lat = parseFloat(coords?.[1]);
-          if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
-            patch.latitude = lat;
-            patch.longitude = lon;
-          }
-        } catch {}
-        if (Object.keys(patch).length) {
-          metaCacheRef.current.set(p.id, {
-            name: patch.name,
-            address: patch.address,
-            rating: patch.rating,
-          });
-          // Patch both map and list data with the enriched meta
-          setRawPlaces((prev) => prev.map((it) => (it.id === p.id ? { ...it, ...patch } : it)));
-          setListPlaces((prev) => prev.map((it) => (it.id === p.id ? { ...it, ...patch } : it)));
+        const details = await fetchPlaceDetails(p, "map");
+        if (details?.patch && Object.keys(details.patch).length) {
+          applyPlacePatch(p.id, details.patch);
         }
-      } catch {}
-      finally {
+      } catch {
+        // ignore individual fetch failures
+      } finally {
         metaInFlightRef.current.delete(p.id);
       }
     }
@@ -376,64 +462,37 @@ export default function MapScreen() {
   // Resolve coordinates for a place when missing
   const resolvePlaceWithCoords = async (place: Place): Promise<Place> => {
     if (place && !Number.isNaN(place.latitude) && !Number.isNaN(place.longitude)) return place;
-    const placeId = place.id;
-    const pidStr = typeof placeId === 'string' ? placeId : String(placeId);
     let lat = place.latitude;
     let lon = place.longitude;
-    try {
-      const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/meta`, {
-        headers: { "Content-Type": "application/json" },
-      });
-      if (res.ok) {
-        const meta = await res.json();
-        const m = meta?.data ?? meta;
-        const coords =
-          m?.point?.coordinates ??
-          m?.geometry?.coordinates ??
-          [
-            m?.lng ?? m?.longitude ?? m?.location?.lng ?? m?.center?.[0] ?? m?.coordinates?.[0],
-            m?.lat ?? m?.latitude ?? m?.location?.lat ?? m?.center?.[1] ?? m?.coordinates?.[1],
-          ];
-        const lonP = parseFloat(coords?.[0]);
-        const latP = parseFloat(coords?.[1]);
-        if (!Number.isNaN(latP) && !Number.isNaN(lonP)) {
-          lat = latP; lon = lonP;
-        }
-      }
-    } catch {}
-    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    const needsCoords = Number.isNaN(lat) || Number.isNaN(lon);
+    const detailRoute: PlaceDetailRoute | undefined =
+      place.origin === "list"
+        ? "list"
+        : place.origin === "search" || place.origin === "bookmark"
+        ? "meta"
+        : undefined;
+    if (needsCoords && detailRoute) {
       try {
-        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/info`, {
-          headers: { "Content-Type": "application/json" },
-        });
-        if (res.ok) {
-          const info = await res.json();
-          const i = info?.data ?? info;
-          const coords =
-            i?.point?.coordinates ??
-            i?.geometry?.coordinates ??
-            [
-              i?.lng ?? i?.longitude ?? i?.location?.lng ?? i?.center?.[0] ?? i?.coordinates?.[0],
-              i?.lat ?? i?.latitude ?? i?.location?.lat ?? i?.center?.[1] ?? i?.coordinates?.[1],
-            ];
-          const lonP = parseFloat(coords?.[0]);
-          const latP = parseFloat(coords?.[1]);
-          if (!Number.isNaN(latP) && !Number.isNaN(lonP)) {
-            lat = latP; lon = lonP;
-          }
+        const detail = await fetchPlaceDetails(place, detailRoute);
+        if (detail?.patch) {
+          if (typeof detail.patch.latitude === "number") lat = detail.patch.latitude;
+          if (typeof detail.patch.longitude === "number") lon = detail.patch.longitude;
+          applyPlacePatch(place.id, detail.patch);
         }
-      } catch {}
+      } catch {
+        // ignore and fall through to geocode
+      }
     }
     // Fallback: geocode by address if still missing
-    if ((Number.isNaN(lat) || Number.isNaN(lon))) {
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
       const addr = (place.address || "").trim();
       const query = addr || `${place.name || ""}`.trim();
       if (query) {
         try {
-          // Check cache first
-          const cached = geocodeCacheRef.current.get(query);
-          if (cached) {
-            lat = cached.lat; lon = cached.lon;
+          const cachedGeo = geocodeCacheRef.current.get(query);
+          if (cachedGeo) {
+            lat = cachedGeo.lat;
+            lon = cachedGeo.lon;
           } else {
             const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
             const r = await fetch(url, { headers: { Accept: "application/json" } });
@@ -444,7 +503,8 @@ export default function MapScreen() {
                 const glat = parseFloat(first?.lat);
                 const glon = parseFloat(first?.lon);
                 if (!Number.isNaN(glat) && !Number.isNaN(glon)) {
-                  lat = glat; lon = glon;
+                  lat = glat;
+                  lon = glon;
                   geocodeCacheRef.current.set(query, { lat: glat, lon: glon });
                 }
               }
@@ -453,7 +513,10 @@ export default function MapScreen() {
         } catch {}
       }
     }
-    return { ...place, latitude: lat, longitude: lon } as Place;
+    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+      applyPlacePatch(place.id, { latitude: lat, longitude: lon });
+    }
+    return { ...place, latitude: lat, longitude: lon };
   };
 
   useEffect(() => {
@@ -597,6 +660,7 @@ export default function MapScreen() {
               longitude: lon,
               address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
               rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
+              origin: "search",
             };
             const cached = metaCacheRef.current.get(base.id);
             return cached ? { ...base, ...cached } : base;
@@ -666,78 +730,21 @@ export default function MapScreen() {
     setSuggestions([]);
     // Set selected with current info, then enrich with meta
     setSelectedPlace(place);
-    // Fetch meta to fill in name/address/rating if missing from map envelope
+    setPlaceImages(place.images ?? []);
+    // Fetch the appropriate detail bundle for the selected place
     (async () => {
       try {
-        const placeId = place.id;
-        const pidStr = typeof placeId === 'string' ? placeId : String(placeId);
-        if (!placeId || (typeof pidStr === 'string' && pidStr.includes(','))) {
-          // Skip meta fetch if we don't have a real place id
-          return;
+        const details = await fetchPlaceDetails(place);
+        if (details?.patch) {
+          applyPlacePatch(place.id, details.patch);
         }
-        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/meta`, {
-          headers: { "Content-Type": "application/json" },
-        });
-        if (res.ok) {
-          const meta = await res.json();
-          const m = meta?.data ?? meta;
-          setSelectedPlace((prev) => {
-            if (!prev || prev.id !== place.id) return prev;
-            return {
-              ...prev,
-              name: typeof m?.name === "string" && m.name.trim() ? m.name : prev.name,
-              address: typeof m?.address === "string" && m.address.trim() ? m.address : prev.address,
-              rating:
-                typeof m?.rating === "number"
-                  ? m.rating
-                  : (typeof prev?.rating === "number" ? prev.rating : 0),
-            } as Place;
-          });
-        }
-      } catch (e) {
-        // Silent fail; keep existing fallback values
-      }
-    })();
-    // Fetch images and possibly refined rating
-    (async () => {
-      try {
-        const placeId = place.id;
-        const pidStr = typeof placeId === 'string' ? placeId : String(placeId);
-        if (!placeId || (typeof pidStr === 'string' && pidStr.includes(','))) {
-          setPlaceImages([]);
-          return;
-        }
-        const res = await fetch(`https://api.greasemeter.live/v1/places/${pidStr}/info`, {
-          headers: { "Content-Type": "application/json" },
-        });
-        if (res.ok) {
-          const info = await res.json();
-          const i = info?.data ?? info;
-          const imgsCandidate = Array.isArray(i)
-            ? i
-            : Array.isArray(i?.images)
-            ? i.images
-            : Array.isArray(i?.items)
-            ? i.items
-            : Array.isArray(i?.data)
-            ? i.data
-            : [];
-          const urls = (imgsCandidate as any[])
-            .map((it) => {
-              if (!it) return null;
-              if (typeof it === "string") return it;
-              return it.url || it.src || it.image || it.link || null;
-            })
-            .filter((u): u is string => typeof u === "string" && !!u);
-          setPlaceImages(urls);
-          if (typeof i?.rating === "number") {
-            setSelectedPlace((prev) => (prev && prev.id === place.id ? { ...prev, rating: i.rating } : prev));
-          }
-        } else {
+        if (details) {
+          setPlaceImages(details.images);
+        } else if (!place.images?.length) {
           setPlaceImages([]);
         }
-      } catch (e) {
-        setPlaceImages([]);
+      } catch {
+        if (!place.images?.length) setPlaceImages([]);
       }
     })();
     await fetchReviews(place.id);

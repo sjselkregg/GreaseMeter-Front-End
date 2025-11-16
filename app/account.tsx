@@ -367,7 +367,7 @@ export default function Account() {
       reviewPlaceInFlightRef.current.add(pid);
       try {
         const pidStr = typeof pid === "string" ? pid : String(pid);
-        const res = await fetch(`${API_BASE}/places/${pidStr}/meta`, { headers: { "Content-Type": "application/json" } });
+        const res = await fetch(`${API_BASE}/places/${pidStr}/map`, { headers: { "Content-Type": "application/json" } });
         if (!res.ok) continue;
         const meta = await res.json();
         const m = meta?.data ?? meta;
