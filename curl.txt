@@ -78,9 +78,9 @@
     {
       "data": [
         "id": int
-	"name": string
-	"address": string
-	"rating": int
+    	"name": string
+        "address": string
+        "rating": int
       ],
       "more": bool
     }  
@@ -93,42 +93,47 @@
   # Search response (200)
     [
       {
-	"id": int,
-	"name": string,
-	"address": string
+        "id": int,
+        "name": string,
+        "address": string
       }
     ]
 
-  # Meta request
+  # Meta details for search results and bookmarks
     curl -X GET https://api.greasemeter.live/v1/places/{int}/meta \
     -H "Content-Type: application/json" \
     -w "\nHTTP Status: %{http_code}\n"
 
-  # Meta response (200)
+  # Detail response (200)
     {
-      "name": string,
-      "address": string,
+      "point": geoJSONPoint
+      "images": [string]
       "rating": float32
     }
 
-  # Info request
-    curl -X GET https://api.greasemeter.live/v1/places/{int}/info \
+  # Details for map markers
+    curl -X GET https://api.greasemeter.live/v1/places/{int}/map \
     -H "Content-Type: application/json" \
     -w "\nHTTP Status: %{http_code}\n"
 
-  # Info response (200)
+  # Detail response (200)
     {
-      "rating": float32,
+      "address": string
+      "name": string
       "images": [string]
+      "rating": float32
     }
 
-  # Images request
-    curl -X GET https://api.greasemeter.live/v1/places/{int}/images \
+  # Details for a place listing
+    curl -X GET https://api.greasemeter.live/v1/places/{int}/list \
     -H "Content-Type: application/json" \
     -w "\nHTTP Status: %{http_code}\n"
 
-  # Images response (200)
-    [string]
+  # Detail response (200)
+    {
+      "point": geoJSONPoint
+      "images": [string]
+    }
 
 # Reviews
   # Reviews for place request

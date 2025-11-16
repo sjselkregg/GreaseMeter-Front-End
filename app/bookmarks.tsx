@@ -20,6 +20,8 @@ type Bookmark = {
   id: number;
   name: string;
   address?: string;
+  place_id?: number | string;
+  placeId?: number | string;
 };
 
 type Review = {
@@ -113,10 +115,19 @@ export default function Bookmarks() {
   };
 
   // Fetch reviews for a specific place
-  const fetchReviews = async (placeId: number) => {
+  const fetchReviews = async (placeId?: number | string | null) => {
+    if (placeId == null || (typeof placeId === "string" && !placeId.trim())) {
+      setReviews([]);
+      return;
+    }
     try {
-      const res = await fetch(`${API_BASE}/reviews/places/${placeId}?page=1&limit=20`, {
-        headers: { "Content-Type": "application/json" },
+      const token = await AsyncStorage.getItem("userToken");
+      const pidStr = typeof placeId === "string" ? placeId : String(placeId);
+      const res = await fetch(`${API_BASE}/reviews/places/${pidStr}?page=1&limit=20`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
 
       const text = await res.text();
@@ -127,7 +138,17 @@ export default function Bookmarks() {
       }
 
       const data = text ? JSON.parse(text) : {};
-      const items = Array.isArray(data) ? data : data.items ?? [];
+      const candidates = [
+        Array.isArray(data) ? data : undefined,
+        data?.items,
+        data?.data?.items,
+        data?.data?.results,
+        data?.data?.reviews,
+        data?.data,
+        data?.results,
+        data?.reviews,
+      ];
+      const items = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
       const mapped = items.map((r: any, idx: number) => ({
         id: r.id ?? r.review_id ?? idx,
         text: r.text ?? r.comment ?? "",
@@ -145,7 +166,8 @@ export default function Bookmarks() {
   // Open bookmark details modal
   const openBookmarkDetails = async (bookmark: Bookmark) => {
     setSelectedBookmark(bookmark);
-    await fetchReviews(bookmark.id);
+    const placeId = bookmark.place_id ?? bookmark.placeId ?? bookmark.id;
+    await fetchReviews(placeId);
     setShowModal(true);
   };
 
