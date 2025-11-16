@@ -1,6 +1,9 @@
+import { Image } from "react-native";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
+
+const TITLE_IMAGE = require("../assets/images/GREASETEXT.png");
 
 export default function Layout() {
   return (
@@ -8,9 +11,14 @@ export default function Layout() {
       <Tabs
       screenOptions={{
         headerShown: true,
-        headerStyle: { backgroundColor: "orange", shadowColor: "#ccc", elevation: 4 },
-        headerTitle: "GREASEMETER",
-        headerTitleStyle: {fontWeight: "bold", fontSize: 20, color: "white"},
+        headerStyle: { backgroundColor: "orange", shadowColor: "#ccc", elevation:4 },
+        headerTitle: () => (
+          <Image
+            source={TITLE_IMAGE}
+            resizeMode="contain"
+            style={{ width: 340, height: 110 }}
+          />
+        ),
         headerTitleAlign: "center",
 
         tabBarActiveTintColor: "#900202ff",
