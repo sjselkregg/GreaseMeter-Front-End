@@ -18,6 +18,7 @@ import {
 import MapView, { Marker, Region } from "react-native-maps";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { formatRelativeTime } from "../utils/time";
 
 type PlaceOrigin = "map" | "list" | "search" | "bookmark";
 
@@ -37,6 +38,7 @@ type Review = {
   text: string;
   rating: number;
   name?: string; // review author's username
+  relativeTime?: string;
 };
 
 type PlaceDetailRoute = "map" | "list" | "meta";
@@ -709,16 +711,17 @@ export default function MapScreen() {
       ];
       const items = candidates.find((c) => Array.isArray(c)) ?? [];
 
-      const mapped = (items as any[]).map((r: any, i: number) => ({
-        id: r?.id ?? i,
-        text: r?.text ?? "",
-        rating: parseFloat(r?.rating ?? 0) || 0,
-        name:
-          (typeof r?.name === "string" && r.name) ||
-          (typeof r?.username === "string" && r.username) ||
-          (typeof r?.user?.name === "string" && r.user.name) ||
-          undefined,
-      }));
+        const mapped = (items as any[]).map((r: any, i: number) => ({
+          id: r?.id ?? i,
+          text: r?.text ?? "",
+          rating: parseFloat(r?.rating ?? 0) || 0,
+          name:
+            (typeof r?.name === "string" && r.name) ||
+            (typeof r?.username === "string" && r.username) ||
+            (typeof r?.user?.name === "string" && r.user.name) ||
+            undefined,
+          relativeTime: formatRelativeTime(r?.time),
+        }));
       setReviews(mapped);
     } catch (err) {
       console.error("Error fetching reviews:", err);
@@ -830,6 +833,7 @@ export default function MapScreen() {
             id: r.id ?? Date.now(),
             text: r.text ?? reviewText.trim(),
             rating: parseFloat(r.rating ?? reviewRating) || parseInt(reviewRating) || 0,
+            relativeTime: formatRelativeTime(r?.time) ?? formatRelativeTime(new Date()),
           };
           setReviews((prev) => [optimistic, ...prev]);
         }
@@ -1047,7 +1051,7 @@ export default function MapScreen() {
               renderItem={({ item }) => (
                 <View style={styles.review}>
                   <Text style={styles.reviewText}>
-                    {item.name ? `${item.name} — ` : ""}⭐ {item.rating} - {item.text}
+                    {item.name ? `${item.name} — ` : ""}⭐ {item.rating} - {item.text}{item.relativeTime ? ` • ${item.relativeTime}` : ""}
                   </Text>
                 </View>
               )}

@@ -13,6 +13,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
+import { formatRelativeTime } from "../utils/time";
 
 type User = {
   name: string;
@@ -25,6 +26,7 @@ type Review = {
   rating: number;
   place_name?: string;
   place_id?: number | string;
+  relativeTime?: string;
 };
 
 export default function Account() {
@@ -333,6 +335,7 @@ export default function Account() {
           rating: typeof r?.rating === "number" ? r.rating : parseFloat(r?.rating ?? 0) || 0,
           place_name: pname,
           place_id: pid,
+          relativeTime: formatRelativeTime(r?.time),
         };
       });
 
@@ -546,7 +549,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
                   <View style={styles.reviewItem}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.reviewText} numberOfLines={3}>
-                        ⭐ {item.rating} - {item.place_name || "Unknown"} - {item.text}
+                        ⭐ {item.rating} - {item.place_name || "Unknown"} - {item.text}{item.relativeTime ? ` • ${item.relativeTime}` : ""}
                       </Text>
                     </View>
                     {editReviews && (

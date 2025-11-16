@@ -14,6 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
+import { formatRelativeTime } from "../utils/time";
 
 type Bookmark = {
   id: number;
@@ -25,6 +26,7 @@ type Review = {
   id: number | string;
   text: string;
   rating: number;
+  relativeTime?: string;
 };
 
 export default function Bookmarks() {
@@ -130,6 +132,7 @@ export default function Bookmarks() {
         id: r.id ?? r.review_id ?? idx,
         text: r.text ?? r.comment ?? "",
         rating: r.rating ?? r.stars ?? 0,
+        relativeTime: formatRelativeTime(r?.time),
       }));
 
       setReviews(mapped);
@@ -293,7 +296,7 @@ export default function Bookmarks() {
                 renderItem={({ item }) => (
                   <View style={styles.review}>
                     <Text style={styles.reviewText}>
-                      ⭐ {item.rating} - {item.text}
+                      ⭐ {item.rating} - {item.text}{item.relativeTime ? ` • ${item.relativeTime}` : ""}
                     </Text>
                   </View>
                 )}
