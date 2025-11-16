@@ -9,6 +9,7 @@ import {
   Modal,
   RefreshControl,
   TextInput,
+  Image,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -45,6 +46,11 @@ export default function Bookmarks() {
   const [submittingRec, setSubmittingRec] = useState(false);
   const [editBookmarks, setEditBookmarks] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewHasMore, setReviewHasMore] = useState(false);
+  const [reviewLoadingMore, setReviewLoadingMore] = useState(false);
+  const [currentPlaceId, setCurrentPlaceId] = useState<number | string | null>(null);
+  const [bookmarkImages, setBookmarkImages] = useState<string[]>([]);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -115,15 +121,22 @@ export default function Bookmarks() {
   };
 
   // Fetch reviews for a specific place
-  const fetchReviews = async (placeId?: number | string | null) => {
+  const fetchReviews = async (
+    placeId?: number | string | null,
+    opts?: { page?: number; append?: boolean }
+  ) => {
     if (placeId == null || (typeof placeId === "string" && !placeId.trim())) {
       setReviews([]);
       return;
     }
+    const page = Math.max(1, opts?.page ?? 1);
+    const limit = 20;
+    const append = opts?.append ?? page > 1;
+    if (append) setReviewLoadingMore(true);
     try {
       const token = await AsyncStorage.getItem("userToken");
       const pidStr = typeof placeId === "string" ? placeId : String(placeId);
-      const res = await fetch(`${API_BASE}/reviews/places/${pidStr}?page=1&limit=20`, {
+      const res = await fetch(`${API_BASE}/reviews/places/${pidStr}?page=${page}&limit=${limit}`, {
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -156,10 +169,52 @@ export default function Bookmarks() {
         relativeTime: formatRelativeTime(r?.time),
       }));
 
-      setReviews(mapped);
+      setReviews((prev) => (append ? [...prev, ...mapped] : mapped));
+      const moreFlag =
+        data?.more === true ||
+        data?.data?.more === true ||
+        data?.pagination?.hasMore === true;
+      setReviewHasMore(Boolean(moreFlag || (mapped.length >= limit)));
+      setReviewPage(page);
     } catch (err) {
       console.error("Error fetching reviews:", err);
-      setReviews([]);
+      if (!opts?.append) setReviews([]);
+    } finally {
+      if (append) setReviewLoadingMore(false);
+    }
+  };
+
+  const fetchBookmarkImages = async (placeId?: number | string | null) => {
+    if (placeId == null || (typeof placeId === "string" && !placeId.trim())) {
+      setBookmarkImages([]);
+      return;
+    }
+    try {
+      const pidStr = typeof placeId === "string" ? placeId : String(placeId);
+      const res = await fetch(`${API_BASE}/places/${pidStr}/map`, {
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        setBookmarkImages([]);
+        return;
+      }
+      const payload = await res.json();
+      const data = payload?.data ?? payload;
+      const candidates = [
+        Array.isArray(data?.images) ? data.images : undefined,
+        Array.isArray(data?.items) ? data.items : undefined,
+        Array.isArray(data?.data) ? data.data : undefined,
+      ];
+      const arr = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
+      const urls = arr
+        .map((img) =>
+          typeof img === "string" ? img : img?.url ?? img?.src ?? img?.image ?? img?.link ?? null
+        )
+        .filter((u): u is string => typeof u === "string" && !!u);
+      setBookmarkImages(urls);
+    } catch (err) {
+      console.warn("Failed to fetch bookmark images:", err);
+      setBookmarkImages([]);
     }
   };
 
@@ -167,7 +222,15 @@ export default function Bookmarks() {
   const openBookmarkDetails = async (bookmark: Bookmark) => {
     setSelectedBookmark(bookmark);
     const placeId = bookmark.place_id ?? bookmark.placeId ?? bookmark.id;
-    await fetchReviews(placeId);
+    setCurrentPlaceId(placeId ?? null);
+    setReviewPage(1);
+    setReviewHasMore(false);
+    setReviewLoadingMore(false);
+    setBookmarkImages([]);
+    await Promise.all([
+      fetchReviews(placeId, { page: 1, append: false }),
+      fetchBookmarkImages(placeId),
+    ]);
     setShowModal(true);
   };
 
@@ -175,6 +238,16 @@ export default function Bookmarks() {
     setShowModal(false);
     setSelectedBookmark(null);
     setReviews([]);
+    setReviewPage(1);
+    setReviewHasMore(false);
+    setReviewLoadingMore(false);
+    setCurrentPlaceId(null);
+    setBookmarkImages([]);
+  };
+
+  const handleLoadMoreReviews = async () => {
+    if (!currentPlaceId || reviewLoadingMore || !reviewHasMore) return;
+    await fetchReviews(currentPlaceId, { page: reviewPage + 1, append: true });
   };
 
   // Pull-to-refresh
@@ -311,6 +384,20 @@ export default function Bookmarks() {
                 <Text style={styles.modalAddress}>{selectedBookmark.address}</Text>
               ) : null}
 
+              {bookmarkImages.length > 0 && (
+                <View style={styles.imagesContainer}>
+                  <FlatList
+                    horizontal
+                    data={bookmarkImages}
+                    keyExtractor={(uri, idx) => `${uri}-${idx}`}
+                    showsHorizontalScrollIndicator={false}
+                    renderItem={({ item }) => (
+                      <Image source={{ uri: item }} style={styles.bookmarkImage} />
+                    )}
+                  />
+                </View>
+              )}
+
               <Text style={styles.sectionTitle}>Reviews</Text>
               <FlatList
                 data={reviews}
@@ -324,6 +411,24 @@ export default function Bookmarks() {
                 )}
                 ListEmptyComponent={<Text>No reviews yet</Text>}
               />
+              {reviewHasMore && reviews.length >= 20 && (
+                <TouchableOpacity
+                  style={[
+                    styles.closeButton,
+                    {
+                      backgroundColor: "#555",
+                      marginTop: 12,
+                      opacity: reviewLoadingMore ? 0.6 : 1,
+                    },
+                  ]}
+                  onPress={handleLoadMoreReviews}
+                  disabled={reviewLoadingMore}
+                >
+                  <Text style={styles.closeButtonText}>
+                    {reviewLoadingMore ? "Loading…" : "Load More"}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 style={[styles.closeButton, { backgroundColor: "#555" }]}
@@ -361,6 +466,16 @@ const styles = StyleSheet.create({
     color: "#007AFF",
     fontSize: 16,
     fontWeight: "600",
+  },
+  imagesContainer: {
+    marginVertical: 12,
+  },
+  bookmarkImage: {
+    width: 140,
+    height: 100,
+    borderRadius: 10,
+    marginRight: 10,
+    backgroundColor: "#f0f0f0",
   },
   bookmarkItem: {
     flexDirection: "row",

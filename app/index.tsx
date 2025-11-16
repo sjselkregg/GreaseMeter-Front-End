@@ -67,6 +67,9 @@ export default function MapScreen() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [placeImages, setPlaceImages] = useState<string[]>([]);
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewHasMore, setReviewHasMore] = useState(false);
+  const [reviewLoadingMore, setReviewLoadingMore] = useState(false);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
   const imageViewerRef = useRef<FlatList<string> | null>(null);
@@ -688,11 +691,18 @@ export default function MapScreen() {
   }, [search, region.latitude, region.longitude]);
 
   // Fetch reviews for a place
-  const fetchReviews = async (placeId: number | string) => {
+  const fetchReviews = async (
+    placeId: number | string,
+    opts?: { page?: number; append?: boolean }
+  ) => {
+    const page = Math.max(1, opts?.page ?? 1);
+    const limit = 20;
+    const append = opts?.append ?? page > 1;
+    if (append) setReviewLoadingMore(true);
     try {
       const token = await AsyncStorage.getItem("userToken");
       const res = await fetch(
-        `https://api.greasemeter.live/v1/reviews/places/${placeId}?page=1&limit=20`,
+        `https://api.greasemeter.live/v1/reviews/places/${placeId}?page=${page}&limit=${limit}`,
         {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -711,21 +721,29 @@ export default function MapScreen() {
       ];
       const items = candidates.find((c) => Array.isArray(c)) ?? [];
 
-        const mapped = (items as any[]).map((r: any, i: number) => ({
-          id: r?.id ?? i,
-          text: r?.text ?? "",
-          rating: parseFloat(r?.rating ?? 0) || 0,
-          name:
-            (typeof r?.name === "string" && r.name) ||
-            (typeof r?.username === "string" && r.username) ||
-            (typeof r?.user?.name === "string" && r.user.name) ||
-            undefined,
-          relativeTime: formatRelativeTime(r?.time),
-        }));
-      setReviews(mapped);
+      const mapped = (items as any[]).map((r: any, i: number) => ({
+        id: r?.id ?? i,
+        text: r?.text ?? "",
+        rating: parseFloat(r?.rating ?? 0) || 0,
+        name:
+          (typeof r?.name === "string" && r.name) ||
+          (typeof r?.username === "string" && r.username) ||
+          (typeof r?.user?.name === "string" && r.user.name) ||
+          undefined,
+        relativeTime: formatRelativeTime(r?.time),
+      }));
+      setReviews((prev) => (append ? [...prev, ...mapped] : mapped));
+      const moreFlag =
+        data?.more === true ||
+        data?.data?.more === true ||
+        data?.pagination?.hasMore === true;
+      setReviewHasMore(Boolean(moreFlag || (Array.isArray(mapped) && mapped.length >= limit)));
+      setReviewPage(page);
     } catch (err) {
       console.error("Error fetching reviews:", err);
-      setReviews([]);
+      if (!opts?.append) setReviews([]);
+    } finally {
+      if (append) setReviewLoadingMore(false);
     }
   };
 
@@ -734,6 +752,9 @@ export default function MapScreen() {
     // Set selected with current info, then enrich with meta
     setSelectedPlace(place);
     setPlaceImages(place.images ?? []);
+    setReviewPage(1);
+    setReviewHasMore(false);
+    setReviewLoadingMore(false);
     // Fetch the appropriate detail bundle for the selected place
     (async () => {
       try {
@@ -750,7 +771,7 @@ export default function MapScreen() {
         if (!place.images?.length) setPlaceImages([]);
       }
     })();
-    await fetchReviews(place.id);
+    await fetchReviews(place.id, { page: 1, append: false });
     Animated.spring(slideAnim, { toValue: SNAP_POINTS.HALF, useNativeDriver: false }).start();
   };
 
@@ -759,7 +780,15 @@ export default function MapScreen() {
       setSelectedPlace(null);
       setReviews([]);
       setPlaceImages([]);
+      setReviewPage(1);
+      setReviewHasMore(false);
+      setReviewLoadingMore(false);
     });
+  };
+
+  const handleLoadMoreReviews = async () => {
+    if (!selectedPlace || reviewLoadingMore || !reviewHasMore) return;
+    await fetchReviews(selectedPlace.id, { page: reviewPage + 1, append: true });
   };
 
   const handleAddBookmark = async () => {
@@ -1057,6 +1086,24 @@ export default function MapScreen() {
               )}
               ListEmptyComponent={<Text>No reviews yet</Text>}
             />
+            {reviewHasMore && reviews.length >= 20 && (
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  {
+                    backgroundColor: "#555",
+                    marginTop: 8,
+                    opacity: reviewLoadingMore ? 0.6 : 1,
+                  },
+                ]}
+                onPress={handleLoadMoreReviews}
+                disabled={reviewLoadingMore}
+              >
+                <Text style={styles.buttonText}>
+                  {reviewLoadingMore ? "Loading…" : "Load More"}
+                </Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.buttonRow}>
               <TouchableOpacity style={styles.actionButton} onPress={handleAddBookmark}>
                 <Text style={styles.buttonText}>Add Bookmark</Text>
