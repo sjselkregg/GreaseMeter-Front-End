@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   StyleSheet,
   View,
@@ -43,11 +43,56 @@ type Review = {
 
 type PlaceDetailRoute = "map" | "list" | "meta";
 
+const META_PREFETCH_LIMIT = 40;
+const META_PREFETCH_CONCURRENCY = 6;
+const REGION_VISIBLE_MULTIPLIER = 1.3;
+const CACHE_RETENTION_MULTIPLIER = 2.8;
 const hasValidCoordinate = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
 const placeHasValidCoords = (place?: Place | null): place is Place =>
   Boolean(place && hasValidCoordinate(place.latitude) && hasValidCoordinate(place.longitude));
+
+type Bounds = {
+  minLat: number;
+  maxLat: number;
+  minLng: number;
+  maxLng: number;
+};
+
+const computeBounds = (region?: Region | null, multiplier = 1): Bounds | null => {
+  if (!region) return null;
+  const latSpan = Math.max(region.latitudeDelta, 0.0005) * multiplier;
+  const lngSpan = Math.max(region.longitudeDelta, 0.0005) * multiplier;
+  return {
+    minLat: region.latitude - latSpan / 2,
+    maxLat: region.latitude + latSpan / 2,
+    minLng: region.longitude - lngSpan / 2,
+    maxLng: region.longitude + lngSpan / 2,
+  };
+};
+
+const placeWithinBounds = (place?: Place | null, bounds?: Bounds | null): boolean => {
+  if (!bounds) return true;
+  if (!placeHasValidCoords(place)) return false;
+  return (
+    place.latitude >= bounds.minLat &&
+    place.latitude <= bounds.maxLat &&
+    place.longitude >= bounds.minLng &&
+    place.longitude <= bounds.maxLng
+  );
+};
+
+const getPlaceKey = (place: Partial<Place>): string | null => {
+  if (place?.id != null) {
+    const idStr = String(place.id);
+    if (idStr.length) return idStr;
+  }
+  if (hasValidCoordinate(place.latitude) && hasValidCoordinate(place.longitude)) {
+    return `${place.latitude.toFixed(5)}:${place.longitude.toFixed(5)}`;
+  }
+  return null;
+};
 
 const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -87,6 +132,8 @@ export default function MapScreen() {
   const searchQueryIdRef = useRef(0);
   const metaCacheRef = useRef<Map<string | number, Partial<Place>>>(new Map());
   const metaInFlightRef = useRef<Set<string | number>>(new Set());
+  const placeCacheRef = useRef<Map<string, Place>>(new Map());
+  const placeFetchIdRef = useRef(0);
 
   const getDetailRouteForPlace = (
     place: Place,
@@ -157,23 +204,54 @@ export default function MapScreen() {
     if (!Object.keys(sanitized).length) return;
     const cached = metaCacheRef.current.get(placeId) ?? {};
     metaCacheRef.current.set(placeId, { ...cached, ...sanitized });
+    const cacheKey =
+      getPlaceKey({
+        id: placeId,
+        latitude: sanitized.latitude,
+        longitude: sanitized.longitude,
+      }) ?? String(placeId);
+    if (cacheKey) {
+      const cacheEntry = placeCacheRef.current.get(cacheKey);
+      const mergedBase: Place =
+        cacheEntry ??
+        ({
+          id: placeId,
+          name:
+            typeof sanitized.name === "string"
+              ? sanitized.name
+              : cacheEntry?.name ?? "Unnamed Place",
+          latitude: hasValidCoordinate(sanitized.latitude)
+            ? (sanitized.latitude as number)
+            : cacheEntry?.latitude ?? Number.NaN,
+          longitude: hasValidCoordinate(sanitized.longitude)
+            ? (sanitized.longitude as number)
+            : cacheEntry?.longitude ?? Number.NaN,
+          address:
+            typeof sanitized.address === "string"
+              ? sanitized.address
+              : cacheEntry?.address ?? "",
+          rating:
+            typeof sanitized.rating === "number"
+              ? sanitized.rating
+              : cacheEntry?.rating,
+          origin: cacheEntry?.origin,
+        } as Place);
+      placeCacheRef.current.set(cacheKey, { ...mergedBase, ...sanitized });
+    }
     setRawPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
     setListPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
     setSuggestions((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
     setSelectedPlace((prev) => (prev && prev.id === placeId ? { ...prev, ...sanitized } : prev));
   };
 
-  const fetchPlaceDetails = async (
+  const requestPlaceDetails = async (
+    pid: string,
     place: Place,
-    routeOverride?: PlaceDetailRoute
+    route: PlaceDetailRoute
   ): Promise<{ patch: Partial<Place>; images: string[] } | null> => {
-    const placeId = place?.id;
-    if (placeId == null) return null;
-    const pidStr = typeof placeId === "string" ? placeId : String(placeId);
-    if (!pidStr || pidStr.includes(",")) return null;
-    const route = getDetailRouteForPlace(place, routeOverride);
+    if (!pid) return null;
     try {
-      const res = await fetch(`${API_BASE}/places/${pidStr}/${route}`, {
+      const res = await fetch(`${API_BASE}/places/${pid}/${route}`, {
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) return null;
@@ -200,6 +278,45 @@ export default function MapScreen() {
     }
   };
 
+  const detailMissingReadableMeta = (detail: { patch: Partial<Place> } | null): boolean => {
+    if (!detail) return true;
+    const rawName = typeof detail.patch?.name === "string" ? detail.patch.name.trim() : "";
+    const rawAddress =
+      typeof detail.patch?.address === "string" ? detail.patch.address.trim() : "";
+    const noName = !rawName || rawName === "Unnamed Place";
+    return noName && !rawAddress;
+  };
+
+  const mergeDetailResponses = (
+    primary: { patch: Partial<Place>; images: string[] } | null,
+    fallback: { patch: Partial<Place>; images: string[] } | null
+  ): { patch: Partial<Place>; images: string[] } | null => {
+    if (primary && fallback) {
+      return {
+        patch: { ...primary.patch, ...fallback.patch },
+        images: fallback.images.length ? fallback.images : primary.images,
+      };
+    }
+    return fallback ?? primary;
+  };
+
+  const fetchPlaceDetails = async (
+    place: Place,
+    routeOverride?: PlaceDetailRoute
+  ): Promise<{ patch: Partial<Place>; images: string[] } | null> => {
+    const placeId = place?.id;
+    if (placeId == null) return null;
+    const pidStr = typeof placeId === "string" ? placeId : String(placeId);
+    if (!pidStr || pidStr.includes(",")) return null;
+    const primaryRoute = getDetailRouteForPlace(place, routeOverride);
+    const primary = await requestPlaceDetails(pidStr, place, primaryRoute);
+    const shouldFallback =
+      (primaryRoute === "map" || primaryRoute === "list") && detailMissingReadableMeta(primary);
+    if (!shouldFallback) return primary;
+    const fallback = await requestPlaceDetails(pidStr, place, "meta");
+    return mergeDetailResponses(primary, fallback);
+  };
+
   const screenHeight = Dimensions.get("window").height;
   const initialRegion: Region = {
     latitude: 39.9526,
@@ -208,12 +325,59 @@ export default function MapScreen() {
     longitudeDelta: 0.05,
   };
   const [region, setRegion] = useState<Region>(initialRegion);
+  const regionRef = useRef(region);
   const SNAP_POINTS = {
     CLOSED: screenHeight,
     HALF: screenHeight * 0.5,
     FULL: screenHeight * 0.1,
   };
   const slideAnim = useRef(new Animated.Value(SNAP_POINTS.CLOSED)).current;
+  const updateRawPlacesForRegion = useCallback(
+    (targetRegion?: Region) => {
+      const nextRegion = targetRegion ?? regionRef.current;
+      const bounds = computeBounds(nextRegion, REGION_VISIBLE_MULTIPLIER);
+      if (!bounds) {
+        setRawPlaces(Array.from(placeCacheRef.current.values()));
+        return;
+      }
+      const filtered: Place[] = [];
+      placeCacheRef.current.forEach((val) => {
+        if (placeWithinBounds(val, bounds)) filtered.push(val);
+      });
+      setRawPlaces(filtered);
+    },
+    []
+  );
+
+  const mergePlacesIntoCache = (incoming: Place[], regionSnapshot: Region) => {
+    if (!incoming?.length) return;
+    const cache = placeCacheRef.current;
+    for (const place of incoming) {
+      const key = getPlaceKey(place);
+      if (!key) continue;
+      const existing = cache.get(key);
+      cache.set(key, existing ? { ...existing, ...place } : place);
+    }
+    const pruneBounds = computeBounds(regionSnapshot, CACHE_RETENTION_MULTIPLIER);
+    if (pruneBounds) {
+      cache.forEach((value, key) => {
+        if (!placeWithinBounds(value, pruneBounds)) {
+          cache.delete(key);
+        }
+      });
+    }
+  };
+
+  useEffect(() => {
+    regionRef.current = region;
+    updateRawPlacesForRegion(region);
+  }, [
+    region.latitude,
+    region.longitude,
+    region.latitudeDelta,
+    region.longitudeDelta,
+    updateRawPlacesForRegion,
+  ]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -249,8 +413,10 @@ export default function MapScreen() {
 
   // Fetch places
   const fetchPlaces = async () => {
+    const requestId = ++placeFetchIdRef.current;
+    const regionSnapshot = regionRef.current ?? region;
     try {
-      const url = `https://api.greasemeter.live/v1/places/map?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}`;
+      const url = `https://api.greasemeter.live/v1/places/map?lat=${regionSnapshot.latitude}&lng=${regionSnapshot.longitude}&latDelta=${regionSnapshot.latitudeDelta}&lngDelta=${regionSnapshot.longitudeDelta}`;
       const res = await fetch(url);
       const data = await res.json();
       // Normalize possible API shapes into an array
@@ -296,10 +462,12 @@ export default function MapScreen() {
           const cached = metaCacheRef.current.get(base.id);
           return cached ? { ...base, ...cached } : base;
         })
-        .filter(Boolean);
-      setRawPlaces(mapped as Place[]);
+        .filter(Boolean) as Place[];
+      mergePlacesIntoCache(mapped, regionSnapshot);
+      if (placeFetchIdRef.current !== requestId) return;
+      updateRawPlacesForRegion(regionSnapshot);
       // Enrich names/addresses asynchronously for list view
-      enrichPlacesMeta(mapped as Place[]);
+      enrichPlacesMeta(mapped);
     } catch (err) {
       console.error("Failed to fetch places:", err);
     }
@@ -449,7 +617,13 @@ export default function MapScreen() {
 
   // Fetch detail data for map markers lacking readable name/address
   const enrichPlacesMeta = async (list: Place[]) => {
-    const candidates = list.slice(0, 40); // cap to avoid overfetching
+    const candidates = list.slice(0, META_PREFETCH_LIMIT); // cap to avoid overfetching
+    const pending: Promise<void>[] = [];
+    const flush = async () => {
+      if (!pending.length) return;
+      const batch = pending.splice(0, pending.length);
+      await Promise.allSettled(batch);
+    };
     for (const p of candidates) {
       if (!p || p.id == null) continue;
       if (p.origin && p.origin !== "map") continue;
@@ -460,17 +634,24 @@ export default function MapScreen() {
       if (!needs) continue;
       if (metaInFlightRef.current.has(p.id)) continue;
       metaInFlightRef.current.add(p.id);
-      try {
-        const details = await fetchPlaceDetails(p, "map");
-        if (details?.patch && Object.keys(details.patch).length) {
-          applyPlacePatch(p.id, details.patch);
+      const task = (async () => {
+        try {
+          const details = await fetchPlaceDetails(p, "map");
+          if (details?.patch && Object.keys(details.patch).length) {
+            applyPlacePatch(p.id, details.patch);
+          }
+        } catch {
+          // ignore individual fetch failures
+        } finally {
+          metaInFlightRef.current.delete(p.id);
         }
-      } catch {
-        // ignore individual fetch failures
-      } finally {
-        metaInFlightRef.current.delete(p.id);
+      })();
+      pending.push(task);
+      if (pending.length >= META_PREFETCH_CONCURRENCY) {
+        await flush();
       }
     }
+    await flush();
   };
 
   // Resolve coordinates for a place when missing
