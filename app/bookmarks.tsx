@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   RefreshControl,
   TextInput,
   Image,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -35,6 +36,7 @@ type Review = {
 export default function Bookmarks() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const screenWidth = Dimensions.get("window").width;
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<Bookmark | null>(null);
@@ -51,6 +53,9 @@ export default function Bookmarks() {
   const [reviewLoadingMore, setReviewLoadingMore] = useState(false);
   const [currentPlaceId, setCurrentPlaceId] = useState<number | string | null>(null);
   const [bookmarkImages, setBookmarkImages] = useState<string[]>([]);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [imageViewerIndex, setImageViewerIndex] = useState(0);
+  const imageViewerRef = useRef<FlatList<string> | null>(null);
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
@@ -227,6 +232,8 @@ export default function Bookmarks() {
     setReviewHasMore(false);
     setReviewLoadingMore(false);
     setBookmarkImages([]);
+    setImageViewerIndex(0);
+    setImageViewerVisible(false);
     await Promise.all([
       fetchReviews(placeId, { page: 1, append: false }),
       fetchBookmarkImages(placeId),
@@ -243,12 +250,33 @@ export default function Bookmarks() {
     setReviewLoadingMore(false);
     setCurrentPlaceId(null);
     setBookmarkImages([]);
+    setImageViewerIndex(0);
+    setImageViewerVisible(false);
   };
 
   const handleLoadMoreReviews = async () => {
     if (!currentPlaceId || reviewLoadingMore || !reviewHasMore) return;
     await fetchReviews(currentPlaceId, { page: reviewPage + 1, append: true });
   };
+
+  const handleOpenImageViewer = (index: number) => {
+    if (!bookmarkImages.length) return;
+    const safeIndex = Math.max(0, Math.min(index, Math.max(bookmarkImages.length - 1, 0)));
+    setImageViewerIndex(safeIndex);
+    setImageViewerVisible(true);
+  };
+
+  useEffect(() => {
+    if (!imageViewerVisible || !imageViewerRef.current) return;
+    const safeIndex = Math.max(0, Math.min(imageViewerIndex, Math.max(bookmarkImages.length - 1, 0)));
+    try {
+      imageViewerRef.current.scrollToOffset({
+        offset: screenWidth * safeIndex,
+        animated: false,
+      });
+    } catch {}
+  }, [imageViewerVisible, imageViewerIndex, screenWidth, bookmarkImages.length]);
+
 
   // Pull-to-refresh
   const onRefresh = async () => {
@@ -391,8 +419,13 @@ export default function Bookmarks() {
                     data={bookmarkImages}
                     keyExtractor={(uri, idx) => `${uri}-${idx}`}
                     showsHorizontalScrollIndicator={false}
-                    renderItem={({ item }) => (
-                      <Image source={{ uri: item }} style={styles.bookmarkImage} />
+                    renderItem={({ item, index }) => (
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => handleOpenImageViewer(index)}
+                      >
+                        <Image source={{ uri: item }} style={styles.bookmarkImage} />
+                      </TouchableOpacity>
                     )}
                   />
                 </View>
@@ -436,6 +469,63 @@ export default function Bookmarks() {
               >
                 <Text style={styles.closeButtonText}>Close</Text>
               </TouchableOpacity>
+
+              {imageViewerVisible && bookmarkImages.length > 0 && (
+                <View
+                  style={[
+                    styles.viewerOverlay,
+                    { paddingTop: Math.max(28, (insets.top || 0) + 16) },
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={styles.imageCloseButton}
+                    onPress={() => setImageViewerVisible(false)}
+                  >
+                    <Text style={styles.imageCloseText}>Close</Text>
+                  </TouchableOpacity>
+                  <FlatList
+                    ref={(r) => (imageViewerRef.current = r)}
+                    data={bookmarkImages}
+                    keyExtractor={(uri, idx) => `${uri}-${idx}`}
+                    horizontal
+                    pagingEnabled
+                    getItemLayout={(_, index) => ({
+                      length: screenWidth,
+                      offset: screenWidth * index,
+                      index,
+                    })}
+                    renderItem={({ item }) => (
+                      <View
+                        style={{
+                          width: screenWidth,
+                          flex: 1,
+                          justifyContent: "center",
+                          alignItems: "center",
+                        }}
+                      >
+                        <Image
+                          source={{ uri: item }}
+                          style={styles.fullscreenImage}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    )}
+                    onMomentumScrollEnd={(e) => {
+                      const idx = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
+                      setImageViewerIndex(idx);
+                    }}
+                    showsHorizontalScrollIndicator={false}
+                  />
+                  <View style={styles.imageIndexBadge}>
+                    <Text style={styles.imageIndexText}>
+                      {`${Math.min(imageViewerIndex + 1, Math.max(bookmarkImages.length, 1))} / ${Math.max(
+                        bookmarkImages.length,
+                        1
+                      )}`}
+                    </Text>
+                  </View>
+                </View>
+              )}
             </>
           )}
         </SafeAreaView>
@@ -477,6 +567,40 @@ const styles = StyleSheet.create({
     marginRight: 10,
     backgroundColor: "#f0f0f0",
   },
+  viewerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#000",
+    zIndex: 20,
+    justifyContent: "center",
+  },
+  fullscreenImage: {
+    width: "100%",
+    height: "100%",
+  },
+  imageCloseButton: {
+    alignSelf: "flex-end",
+    marginRight: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  imageCloseText: {
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  imageIndexBadge: {
+    alignSelf: "center",
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginBottom: 24,
+  },
+  imageIndexText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
   bookmarkItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -495,7 +619,7 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: { color: "#fff", fontWeight: "bold" },
 
-  modalContainer: { flex: 1, padding: 20, backgroundColor: "#fff" },
+  modalContainer: { flex: 1, padding: 20, backgroundColor: "#fff", position: "relative" },
   modalTitle: { fontSize: 22, fontWeight: "bold", marginBottom: 6 },
   modalAddress: { fontSize: 14, color: "#555", marginBottom: 10 },
   sectionTitle: { fontSize: 18, fontWeight: "bold", marginVertical: 10 },
