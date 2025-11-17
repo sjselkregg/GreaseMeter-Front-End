@@ -1,9 +1,22 @@
-import { Image } from "react-native";
+import { Image, ImageSourcePropType } from "react-native";
 import { Tabs } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 
 const TITLE_IMAGE = require("../assets/images/GREASETEXT.png");
+const MAP_ICON = require("../assets/images/mapIcon.png.png");
+const BOOKMARK_ICON = require("../assets/images/bookmarkIcon.png.png");
+const ACCOUNT_ICON = require("../assets/images/accountIcon.png.png");
+
+const renderTabIcon =
+  (source: ImageSourcePropType) =>
+  ({ color }: { color: string }) =>
+    (
+      <Image
+        source={source}
+        resizeMode="contain"
+        style={{ width: 28, height: 28, tintColor: color }}
+      />
+    );
 
 export default function Layout() {
   return (
@@ -31,27 +44,21 @@ export default function Layout() {
         name="bookmarks"       
         options={{
           tabBarLabel: "Bookmarks",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bookmark-outline" size={size} color={color} />
-          ),
+          tabBarIcon: renderTabIcon(BOOKMARK_ICON),
         }}
       />
       <Tabs.Screen
         name="index"           
         options={{
           tabBarLabel: "Map",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="map-outline" size={size} color={color} />
-          ),
+          tabBarIcon: renderTabIcon(MAP_ICON),
         }}
       />
       <Tabs.Screen
         name="account"       
         options={{
           tabBarLabel: "Account",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
-          ),
+          tabBarIcon: renderTabIcon(ACCOUNT_ICON),
         }}
       />
       </Tabs>
