@@ -43,6 +43,12 @@ type Review = {
 
 type PlaceDetailRoute = "map" | "list" | "meta";
 
+const hasValidCoordinate = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const placeHasValidCoords = (place?: Place | null): place is Place =>
+  Boolean(place && hasValidCoordinate(place.latitude) && hasValidCoordinate(place.longitude));
+
 const API_BASE = "https://api.greasemeter.live/v1";
 
 export default function MapScreen() {
@@ -145,13 +151,16 @@ export default function MapScreen() {
   const applyPlacePatch = (placeId: Place["id"], patch: Partial<Place>) => {
     if (!placeId || !patch) return;
     const { origin: _origin, ...rest } = patch;
-    if (!Object.keys(rest).length) return;
+    const sanitized: Partial<Place> = { ...rest };
+    if (!hasValidCoordinate(sanitized.latitude)) delete sanitized.latitude;
+    if (!hasValidCoordinate(sanitized.longitude)) delete sanitized.longitude;
+    if (!Object.keys(sanitized).length) return;
     const cached = metaCacheRef.current.get(placeId) ?? {};
-    metaCacheRef.current.set(placeId, { ...cached, ...rest });
-    setRawPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...rest } : it)));
-    setListPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...rest } : it)));
-    setSuggestions((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...rest } : it)));
-    setSelectedPlace((prev) => (prev && prev.id === placeId ? { ...prev, ...rest } : prev));
+    metaCacheRef.current.set(placeId, { ...cached, ...sanitized });
+    setRawPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
+    setListPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
+    setSuggestions((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
+    setSelectedPlace((prev) => (prev && prev.id === placeId ? { ...prev, ...sanitized } : prev));
   };
 
   const fetchPlaceDetails = async (
@@ -466,10 +475,10 @@ export default function MapScreen() {
 
   // Resolve coordinates for a place when missing
   const resolvePlaceWithCoords = async (place: Place): Promise<Place> => {
-    if (place && !Number.isNaN(place.latitude) && !Number.isNaN(place.longitude)) return place;
-    let lat = place.latitude;
-    let lon = place.longitude;
-    const needsCoords = Number.isNaN(lat) || Number.isNaN(lon);
+    if (placeHasValidCoords(place)) return place;
+    let lat = hasValidCoordinate(place.latitude) ? place.latitude : Number.NaN;
+    let lon = hasValidCoordinate(place.longitude) ? place.longitude : Number.NaN;
+    const needsCoords = !hasValidCoordinate(lat) || !hasValidCoordinate(lon);
     const detailRoute: PlaceDetailRoute | undefined =
       place.origin === "list"
         ? "list"
@@ -489,13 +498,17 @@ export default function MapScreen() {
       }
     }
     // Fallback: geocode by address if still missing
-    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    if (!hasValidCoordinate(lat) || !hasValidCoordinate(lon)) {
       const addr = (place.address || "").trim();
       const query = addr || `${place.name || ""}`.trim();
       if (query) {
         try {
           const cachedGeo = geocodeCacheRef.current.get(query);
-          if (cachedGeo) {
+          if (
+            cachedGeo &&
+            hasValidCoordinate(cachedGeo.lat) &&
+            hasValidCoordinate(cachedGeo.lon)
+          ) {
             lat = cachedGeo.lat;
             lon = cachedGeo.lon;
           } else {
@@ -507,7 +520,7 @@ export default function MapScreen() {
                 const first = arr[0];
                 const glat = parseFloat(first?.lat);
                 const glon = parseFloat(first?.lon);
-                if (!Number.isNaN(glat) && !Number.isNaN(glon)) {
+                if (hasValidCoordinate(glat) && hasValidCoordinate(glon)) {
                   lat = glat;
                   lon = glon;
                   geocodeCacheRef.current.set(query, { lat: glat, lon: glon });
@@ -518,10 +531,15 @@ export default function MapScreen() {
         } catch {}
       }
     }
-    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+    const coordsResolved = hasValidCoordinate(lat) && hasValidCoordinate(lon);
+    if (coordsResolved) {
       applyPlacePatch(place.id, { latitude: lat, longitude: lon });
     }
-    return { ...place, latitude: lat, longitude: lon };
+    return {
+      ...place,
+      latitude: coordsResolved ? lat : Number.NaN,
+      longitude: coordsResolved ? lon : Number.NaN,
+    };
   };
 
   useEffect(() => {
@@ -589,10 +607,12 @@ export default function MapScreen() {
       if (pid != null && it.id === pid) return true;
       // If no reliable id, compare coordinates approximately
       if (
-        typeof lat === "number" && typeof lon === "number" &&
-        !Number.isNaN(lat) && !Number.isNaN(lon) &&
-        Math.abs((it.latitude ?? 0) - lat) < 1e-5 &&
-        Math.abs((it.longitude ?? 0) - lon) < 1e-5
+        hasValidCoordinate(lat) &&
+        hasValidCoordinate(lon) &&
+        hasValidCoordinate(it.latitude) &&
+        hasValidCoordinate(it.longitude) &&
+        Math.abs(it.latitude - lat) < 1e-5 &&
+        Math.abs(it.longitude - lon) < 1e-5
       ) {
         return true;
       }
@@ -939,11 +959,7 @@ export default function MapScreen() {
         ))}
 
         {/* Ensure the currently selected place is always visible as a marker */}
-        {selectedPlace &&
-          typeof selectedPlace.latitude === "number" &&
-          typeof selectedPlace.longitude === "number" &&
-          !Number.isNaN(selectedPlace.latitude) &&
-          !Number.isNaN(selectedPlace.longitude) &&
+        {placeHasValidCoords(selectedPlace) &&
           !placeIncluded(places, selectedPlace) && (
             <Marker
               key={`selected-${String(selectedPlace.id ?? `${selectedPlace.latitude},${selectedPlace.longitude}`)}`}
@@ -999,7 +1015,7 @@ export default function MapScreen() {
                     setSearch("");
                     Keyboard.dismiss();
                     const resolved = await resolvePlaceWithCoords(item);
-                    if (!Number.isNaN(resolved.latitude) && !Number.isNaN(resolved.longitude)) {
+                    if (placeHasValidCoords(resolved)) {
                       mapRef.current?.animateToRegion(
                         {
                           latitude: resolved.latitude,
@@ -1182,7 +1198,7 @@ export default function MapScreen() {
                 onPress={async () => {
                   setShowListModal(false);
                   const resolved = await resolvePlaceWithCoords(item);
-                  if (!Number.isNaN(resolved.latitude) && !Number.isNaN(resolved.longitude)) {
+                  if (placeHasValidCoords(resolved)) {
                     mapRef.current?.animateToRegion(
                       {
                         latitude: resolved.latitude,
