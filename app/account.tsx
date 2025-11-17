@@ -135,6 +135,9 @@ export default function Account() {
       await AsyncStorage.setItem("userToken", data.token);
       await AsyncStorage.setItem("userName", data.name || trimmedName);
       setLoggedInUser({ name: data.name || trimmedName, token: data.token });
+      setEmail("");
+      setUsername("");
+      setPassword("");
       setMode("default");
       Alert.alert("Success", "Account created successfully!");
     } catch (err) {
@@ -187,6 +190,8 @@ export default function Account() {
       const nameFromResponse = data?.name || data?.user?.name || data?.data?.name || trimmedName;
       if (nameFromResponse) await AsyncStorage.setItem("userName", nameFromResponse);
       setLoggedInUser({ name: nameFromResponse, token: data.token });
+      setUsername("");
+      setPassword("");
       setMode("default");
       Alert.alert("Success", `Welcome back, ${data.name || trimmedName}!`);
     } catch (err) {
