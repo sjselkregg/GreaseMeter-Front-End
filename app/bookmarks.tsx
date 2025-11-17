@@ -86,8 +86,18 @@ export default function Bookmarks() {
         return;
       }
 
-      const data = await res.json();
-      setBookmarks(data.items ?? data);
+      const raw = await res.json().catch(() => null);
+      if (!raw) {
+        setBookmarks([]);
+        return;
+      }
+      const candidates = [
+        Array.isArray(raw) ? raw : undefined,
+        Array.isArray(raw?.items) ? raw.items : undefined,
+        Array.isArray(raw?.data?.items) ? raw.data.items : undefined,
+      ];
+      const normalized = (candidates.find((c) => Array.isArray(c)) as Bookmark[]) ?? [];
+      setBookmarks(normalized);
     } catch (err) {
       console.error("Error fetching bookmarks:", err);
     }
