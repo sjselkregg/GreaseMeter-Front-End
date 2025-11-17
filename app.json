@@ -4,12 +4,12 @@
     "slug": "greasemeter",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/gripSplash.png",
+    "icon": "./assets/images/CHEESESTEAKPG.png",
     "scheme": "greasemeter",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/gripSplash.png",
+      "image": "./assets/images/CHEESESTEAKPG.png",
       "resizeMode": "cover",
       "backgroundColor": "black"
     },
@@ -18,7 +18,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/gripSplash.png",
+        "foregroundImage": "./assets/images/CHEESESTEAKPG.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true
@@ -26,7 +26,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/gripSplash.png"
+      "favicon": "./assets/images/CHEESESTEAKPG.png"
     },
     "plugins": [
       "expo-router",
