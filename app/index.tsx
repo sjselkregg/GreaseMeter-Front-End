@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -47,11 +47,24 @@ const META_PREFETCH_LIMIT = 40;
 const META_PREFETCH_CONCURRENCY = 6;
 const REGION_VISIBLE_MULTIPLIER = 1.3;
 const CACHE_RETENTION_MULTIPLIER = 2.8;
-const hasValidCoordinate = (value: unknown): value is number =>
+const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+const wrapLongitude = (value: number): number => {
+  if (!isFiniteNumber(value)) return Number.NaN;
+  let lng = value;
+  while (lng < -180) lng += 360;
+  while (lng > 180) lng -= 360;
+  return lng;
+};
+const isValidLatitude = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= -90 && value <= 90;
+const isValidLongitude = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= -180 && value <= 180;
 
 const placeHasValidCoords = (place?: Place | null): place is Place =>
-  Boolean(place && hasValidCoordinate(place.latitude) && hasValidCoordinate(place.longitude));
+  Boolean(place && isValidLatitude(place.latitude) && isValidLongitude(place.longitude));
 
 type Bounds = {
   minLat: number;
@@ -88,18 +101,55 @@ const getPlaceKey = (place: Partial<Place>): string | null => {
     const idStr = String(place.id);
     if (idStr.length) return idStr;
   }
-  if (hasValidCoordinate(place.latitude) && hasValidCoordinate(place.longitude)) {
+  if (isValidLatitude(place.latitude) && isValidLongitude(place.longitude)) {
     return `${place.latitude.toFixed(5)}:${place.longitude.toFixed(5)}`;
   }
   return null;
 };
 
+const MIN_REGION_DELTA = 0.0002;
+const sanitizeRegion = (candidate?: Partial<Region>): Region | null => {
+  if (!candidate || !isValidLatitude(candidate.latitude)) return null;
+  const safeLat = clampNumber(candidate.latitude, -90, 90);
+  const safeLng = isFiniteNumber(candidate.longitude) ? wrapLongitude(candidate.longitude) : null;
+  const safeLatDelta = isFiniteNumber(candidate.latitudeDelta)
+    ? clampNumber(candidate.latitudeDelta, MIN_REGION_DELTA, 180)
+    : null;
+  const safeLngDelta = isFiniteNumber(candidate.longitudeDelta)
+    ? clampNumber(candidate.longitudeDelta, MIN_REGION_DELTA, 360)
+    : null;
+  if (safeLng == null || safeLatDelta == null || safeLngDelta == null) return null;
+  return {
+    latitude: safeLat,
+    longitude: safeLng,
+    latitudeDelta: safeLatDelta,
+    longitudeDelta: safeLngDelta,
+  };
+};
 const API_BASE = "https://api.greasemeter.live/v1";
+const DEFAULT_REGION =
+  sanitizeRegion({
+    latitude: 39.9526,
+    longitude: -75.1652,
+    latitudeDelta: 0.05,
+    longitudeDelta: 0.05,
+  }) ?? {
+    latitude: 39.9526,
+    longitude: -75.1652,
+    latitudeDelta: 0.05,
+    longitudeDelta: 0.05,
+  };
+const regionFromPlace = (place: Place, delta = 0.01): Region | null =>
+  sanitizeRegion({
+    latitude: place.latitude,
+    longitude: place.longitude,
+    latitudeDelta: delta,
+    longitudeDelta: delta,
+  });
 
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
-  const [places, setPlaces] = useState<Place[]>([]);
   const [rawPlaces, setRawPlaces] = useState<Place[]>([]);
   // Dedicated list view state (server-backed)
   const [listPlaces, setListPlaces] = useState<Place[]>([]);
@@ -134,6 +184,11 @@ export default function MapScreen() {
   const metaInFlightRef = useRef<Set<string | number>>(new Set());
   const placeCacheRef = useRef<Map<string, Place>>(new Map());
   const placeFetchIdRef = useRef(0);
+  const handleRegionChangeComplete = useCallback((next: Region) => {
+    const safe = sanitizeRegion(next);
+    if (!safe) return;
+    setRegion(safe);
+  }, []);
 
   const getDetailRouteForPlace = (
     place: Place,
@@ -171,8 +226,8 @@ export default function MapScreen() {
       const lon = parseFloat(coords?.[0]);
       const lat = parseFloat(coords?.[1]);
       const patch: { latitude?: number; longitude?: number } = {};
-      if (!Number.isNaN(lat)) patch.latitude = lat;
-      if (!Number.isNaN(lon)) patch.longitude = lon;
+      if (isValidLatitude(lat)) patch.latitude = lat;
+      if (isValidLongitude(lon)) patch.longitude = lon;
       return patch;
     } catch {
       return {};
@@ -199,8 +254,8 @@ export default function MapScreen() {
     if (!placeId || !patch) return;
     const { origin: _origin, ...rest } = patch;
     const sanitized: Partial<Place> = { ...rest };
-    if (!hasValidCoordinate(sanitized.latitude)) delete sanitized.latitude;
-    if (!hasValidCoordinate(sanitized.longitude)) delete sanitized.longitude;
+    if (!isValidLatitude(sanitized.latitude)) delete sanitized.latitude;
+    if (!isValidLongitude(sanitized.longitude)) delete sanitized.longitude;
     if (!Object.keys(sanitized).length) return;
     const cached = metaCacheRef.current.get(placeId) ?? {};
     metaCacheRef.current.set(placeId, { ...cached, ...sanitized });
@@ -212,30 +267,33 @@ export default function MapScreen() {
       }) ?? String(placeId);
     if (cacheKey) {
       const cacheEntry = placeCacheRef.current.get(cacheKey);
-      const mergedBase: Place =
-        cacheEntry ??
-        ({
-          id: placeId,
-          name:
-            typeof sanitized.name === "string"
-              ? sanitized.name
-              : cacheEntry?.name ?? "Unnamed Place",
-          latitude: hasValidCoordinate(sanitized.latitude)
-            ? (sanitized.latitude as number)
-            : cacheEntry?.latitude ?? Number.NaN,
-          longitude: hasValidCoordinate(sanitized.longitude)
-            ? (sanitized.longitude as number)
-            : cacheEntry?.longitude ?? Number.NaN,
-          address:
-            typeof sanitized.address === "string"
-              ? sanitized.address
-              : cacheEntry?.address ?? "",
-          rating:
-            typeof sanitized.rating === "number"
-              ? sanitized.rating
-              : cacheEntry?.rating,
-          origin: cacheEntry?.origin,
-        } as Place);
+      const safeName =
+        typeof sanitized.name === "string" && sanitized.name.trim()
+          ? sanitized.name
+          : cacheEntry?.name ?? "Unnamed Place";
+      const safeLatitude = isValidLatitude(sanitized.latitude)
+        ? sanitized.latitude
+        : cacheEntry?.latitude ?? Number.NaN;
+      const safeLongitude = isValidLongitude(sanitized.longitude)
+        ? sanitized.longitude
+        : cacheEntry?.longitude ?? Number.NaN;
+      const safeAddress =
+        typeof sanitized.address === "string" && sanitized.address.trim()
+          ? sanitized.address
+          : cacheEntry?.address ?? "";
+      const safeRating =
+        typeof sanitized.rating === "number" ? sanitized.rating : cacheEntry?.rating;
+      const safeImages = Array.isArray(sanitized.images) ? sanitized.images : cacheEntry?.images;
+      const mergedBase: Place = {
+        id: placeId,
+        name: safeName,
+        latitude: safeLatitude,
+        longitude: safeLongitude,
+        address: safeAddress,
+        rating: safeRating,
+        origin: cacheEntry?.origin,
+        images: safeImages,
+      };
       placeCacheRef.current.set(cacheKey, { ...mergedBase, ...sanitized });
     }
     setRawPlaces((prev) => prev.map((it) => (it.id === placeId ? { ...it, ...sanitized } : it)));
@@ -318,20 +376,15 @@ export default function MapScreen() {
   };
 
   const screenHeight = Dimensions.get("window").height;
-  const initialRegion: Region = {
-    latitude: 39.9526,
-    longitude: -75.1652,
-    latitudeDelta: 0.05,
-    longitudeDelta: 0.05,
-  };
-  const [region, setRegion] = useState<Region>(initialRegion);
-  const regionRef = useRef(region);
+  const [region, setRegion] = useState<Region>(DEFAULT_REGION);
+  const regionRef = useRef(DEFAULT_REGION);
   const SNAP_POINTS = {
     CLOSED: screenHeight,
     HALF: screenHeight * 0.5,
     FULL: screenHeight * 0.1,
   };
   const slideAnim = useRef(new Animated.Value(SNAP_POINTS.CLOSED)).current;
+  const slideAnimValueRef = useRef(SNAP_POINTS.CLOSED);
   const updateRawPlacesForRegion = useCallback(
     (targetRegion?: Region) => {
       const nextRegion = targetRegion ?? regionRef.current;
@@ -349,10 +402,13 @@ export default function MapScreen() {
     []
   );
 
-  const mergePlacesIntoCache = (incoming: Place[], regionSnapshot: Region) => {
+  const isMountedRef = useRef(true);
+
+  const mergePlacesIntoCache = useCallback((incoming: Place[], regionSnapshot: Region) => {
     if (!incoming?.length) return;
     const cache = placeCacheRef.current;
     for (const place of incoming) {
+      if (!placeHasValidCoords(place)) continue;
       const key = getPlaceKey(place);
       if (!key) continue;
       const existing = cache.get(key);
@@ -366,33 +422,29 @@ export default function MapScreen() {
         }
       });
     }
-  };
+  }, []);
 
   useEffect(() => {
     regionRef.current = region;
     updateRawPlacesForRegion(region);
-  }, [
-    region.latitude,
-    region.longitude,
-    region.latitudeDelta,
-    region.longitudeDelta,
-    updateRawPlacesForRegion,
-  ]);
+  }, [region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta, updateRawPlacesForRegion]);
 
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 5,
       onPanResponderMove: (_, g) => {
-        const newPos = slideAnim.__getValue() + g.dy;
-        if (newPos >= SNAP_POINTS.FULL && newPos <= SNAP_POINTS.CLOSED)
-          slideAnim.setValue(newPos);
+        const proposed = slideAnimValueRef.current + g.dy;
+        if (proposed >= SNAP_POINTS.FULL && proposed <= SNAP_POINTS.CLOSED) {
+          slideAnimValueRef.current = proposed;
+          slideAnim.setValue(proposed);
+        }
       },
       onPanResponderRelease: (_, g) => {
         let newPos = SNAP_POINTS.HALF;
         if (g.dy > 100) newPos = SNAP_POINTS.CLOSED;
         else if (g.dy < -100) newPos = SNAP_POINTS.FULL;
         else {
-          const current = slideAnim.__getValue();
+          const current = slideAnimValueRef.current;
           const distances = [
             { pos: SNAP_POINTS.FULL, dist: Math.abs(current - SNAP_POINTS.FULL) },
             { pos: SNAP_POINTS.HALF, dist: Math.abs(current - SNAP_POINTS.HALF) },
@@ -401,6 +453,7 @@ export default function MapScreen() {
           distances.sort((a, b) => a.dist - b.dist);
           newPos = distances[0].pos;
         }
+        slideAnimValueRef.current = newPos;
         Animated.spring(slideAnim, { toValue: newPos, useNativeDriver: false }).start(() => {
           if (newPos === SNAP_POINTS.CLOSED) {
             setSelectedPlace(null);
@@ -412,9 +465,9 @@ export default function MapScreen() {
   ).current;
 
   // Fetch places
-  const fetchPlaces = async () => {
+  const fetchPlaces = useCallback(async () => {
     const requestId = ++placeFetchIdRef.current;
-    const regionSnapshot = regionRef.current ?? region;
+    const regionSnapshot = regionRef.current ?? DEFAULT_REGION;
     try {
       const url = `https://api.greasemeter.live/v1/places/map?lat=${regionSnapshot.latitude}&lng=${regionSnapshot.longitude}&latDelta=${regionSnapshot.latitudeDelta}&lngDelta=${regionSnapshot.longitudeDelta}`;
       const res = await fetch(url);
@@ -437,9 +490,11 @@ export default function MapScreen() {
               p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
               p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
             ];
-          const lon = parseFloat(coords?.[0]);
-          const lat = parseFloat(coords?.[1]);
-          if (isNaN(lat) || isNaN(lon)) return null;
+          const rawLon = parseFloat(coords?.[0]);
+          const rawLat = parseFloat(coords?.[1]);
+          if (!isValidLatitude(rawLat) || !isValidLongitude(rawLon)) return null;
+          const lat = rawLat;
+          const lon = rawLon;
           const pid =
             p.id ??
             p.place_id ??
@@ -464,14 +519,14 @@ export default function MapScreen() {
         })
         .filter(Boolean) as Place[];
       mergePlacesIntoCache(mapped, regionSnapshot);
-      if (placeFetchIdRef.current !== requestId) return;
+      if (!isMountedRef.current || placeFetchIdRef.current !== requestId) return;
       updateRawPlacesForRegion(regionSnapshot);
       // Enrich names/addresses asynchronously for list view
       enrichPlacesMeta(mapped);
     } catch (err) {
       console.error("Failed to fetch places:", err);
     }
-  };
+  }, [mergePlacesIntoCache, updateRawPlacesForRegion]);
 
   // Fetch list view results from server (paginated)
   const fetchListPlaces = async (opts?: { reset?: boolean; pageSize?: number }) => {
@@ -504,8 +559,10 @@ export default function MapScreen() {
               p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
               p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
             ];
-          const lon = parseFloat(coords?.[0]);
-          const lat = parseFloat(coords?.[1]);
+          const rawLon = parseFloat(coords?.[0]);
+          const rawLat = parseFloat(coords?.[1]);
+          const lat = isValidLatitude(rawLat) ? rawLat : Number.NaN;
+          const lon = isValidLongitude(rawLon) ? rawLon : Number.NaN;
           const pid =
             p.id ??
             p.place_id ??
@@ -519,8 +576,8 @@ export default function MapScreen() {
           const base: Place = {
             id: pid ?? `${lat},${lon}`,
             name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
-            latitude: isNaN(lat) ? Number.NaN : lat,
-            longitude: isNaN(lon) ? Number.NaN : lon,
+            latitude: lat,
+            longitude: lon,
             address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
             rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
             origin: "list",
@@ -556,15 +613,17 @@ export default function MapScreen() {
                   p.lng ?? p.longitude ?? p.location?.lng ?? p.center?.[0] ?? p.coordinates?.[0],
                   p.lat ?? p.latitude ?? p.location?.lat ?? p.center?.[1] ?? p.coordinates?.[1],
                 ];
-              const lon = parseFloat(coords?.[0]);
-              const lat = parseFloat(coords?.[1]);
+              const rawLon = parseFloat(coords?.[0]);
+              const rawLat = parseFloat(coords?.[1]);
+              const lat = isValidLatitude(rawLat) ? rawLat : Number.NaN;
+              const lon = isValidLongitude(rawLon) ? rawLon : Number.NaN;
               const pid =
                 p.id ?? p.place_id ?? p.placeId ?? p.gm_place_id ?? p.google_place_id ?? p.googleId ?? p.gmaps_id ?? p.gmaps_place_id ?? p.osm_id;
               const base: Place = {
                 id: pid ?? `${lat},${lon}`,
                 name: p.name ?? p.meta?.name ?? p.title ?? "Unnamed Place",
-                latitude: isNaN(lat) ? Number.NaN : lat,
-                longitude: isNaN(lon) ? Number.NaN : lon,
+                latitude: lat,
+                longitude: lon,
                 address: p.address ?? p.meta?.address ?? p.formatted_address ?? "",
                 rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
                 origin: "map",
@@ -656,10 +715,11 @@ export default function MapScreen() {
 
   // Resolve coordinates for a place when missing
   const resolvePlaceWithCoords = async (place: Place): Promise<Place> => {
-    if (placeHasValidCoords(place)) return place;
-    let lat = hasValidCoordinate(place.latitude) ? place.latitude : Number.NaN;
-    let lon = hasValidCoordinate(place.longitude) ? place.longitude : Number.NaN;
-    const needsCoords = !hasValidCoordinate(lat) || !hasValidCoordinate(lon);
+    const hasCoords = isValidLatitude(place.latitude) && isValidLongitude(place.longitude);
+    if (hasCoords) return place;
+    let lat = hasCoords ? place.latitude : Number.NaN;
+    let lon = hasCoords ? place.longitude : Number.NaN;
+    const needsCoords = !isValidLatitude(lat) || !isValidLongitude(lon);
     const detailRoute: PlaceDetailRoute | undefined =
       place.origin === "list"
         ? "list"
@@ -679,17 +739,13 @@ export default function MapScreen() {
       }
     }
     // Fallback: geocode by address if still missing
-    if (!hasValidCoordinate(lat) || !hasValidCoordinate(lon)) {
+    if (!isValidLatitude(lat) || !isValidLongitude(lon)) {
       const addr = (place.address || "").trim();
       const query = addr || `${place.name || ""}`.trim();
       if (query) {
         try {
           const cachedGeo = geocodeCacheRef.current.get(query);
-          if (
-            cachedGeo &&
-            hasValidCoordinate(cachedGeo.lat) &&
-            hasValidCoordinate(cachedGeo.lon)
-          ) {
+          if (cachedGeo && isValidLatitude(cachedGeo.lat) && isValidLongitude(cachedGeo.lon)) {
             lat = cachedGeo.lat;
             lon = cachedGeo.lon;
           } else {
@@ -701,7 +757,7 @@ export default function MapScreen() {
                 const first = arr[0];
                 const glat = parseFloat(first?.lat);
                 const glon = parseFloat(first?.lon);
-                if (hasValidCoordinate(glat) && hasValidCoordinate(glon)) {
+                if (isValidLatitude(glat) && isValidLongitude(glon)) {
                   lat = glat;
                   lon = glon;
                   geocodeCacheRef.current.set(query, { lat: glat, lon: glon });
@@ -712,7 +768,7 @@ export default function MapScreen() {
         } catch {}
       }
     }
-    const coordsResolved = hasValidCoordinate(lat) && hasValidCoordinate(lon);
+    const coordsResolved = isValidLatitude(lat) && isValidLongitude(lon);
     if (coordsResolved) {
       applyPlacePatch(place.id, { latitude: lat, longitude: lon });
     }
@@ -723,9 +779,19 @@ export default function MapScreen() {
     };
   };
 
+  const focusMapOnPlace = (place: Place, delta = 0.01) => {
+    if (!mapRef.current) return;
+    const target = regionFromPlace(place, delta);
+    if (!target) return;
+    mapRef.current.animateToRegion(target, 800);
+  };
+
   useEffect(() => {
     fetchPlaces();
-  }, []);
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [fetchPlaces]);
 
   // Debounce fetch on region changes
   const regionFetchTimeout = useRef<any>(null);
@@ -737,10 +803,10 @@ export default function MapScreen() {
     return () => {
       if (regionFetchTimeout.current) clearTimeout(regionFetchTimeout.current);
     };
-  }, [region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta]);
+  }, [region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta, fetchPlaces]);
 
   // Sample markers to avoid clutter when zoomed out
-  const samplePlacesForRegion = (all: Place[], r: Region): Place[] => {
+  const samplePlacesForRegion = useCallback((all: Place[], r: Region): Place[] => {
     if (!all?.length) return [];
     const latDelta = Math.max(r.latitudeDelta, 0.0005);
     const lngDelta = Math.max(r.longitudeDelta, 0.0005);
@@ -774,7 +840,7 @@ export default function MapScreen() {
       else result.push(val);
     });
     return result;
-  };
+  }, []);
 
   // helper not needed after reverting selected marker badge
 
@@ -788,10 +854,10 @@ export default function MapScreen() {
       if (pid != null && it.id === pid) return true;
       // If no reliable id, compare coordinates approximately
       if (
-        hasValidCoordinate(lat) &&
-        hasValidCoordinate(lon) &&
-        hasValidCoordinate(it.latitude) &&
-        hasValidCoordinate(it.longitude) &&
+        isValidLatitude(lat) &&
+        isValidLongitude(lon) &&
+        isValidLatitude(it.latitude) &&
+        isValidLongitude(it.longitude) &&
         Math.abs(it.latitude - lat) < 1e-5 &&
         Math.abs(it.longitude - lon) < 1e-5
       ) {
@@ -801,9 +867,14 @@ export default function MapScreen() {
     return false;
   };
 
-  useEffect(() => {
-    setPlaces(samplePlacesForRegion(rawPlaces, region));
-  }, [rawPlaces, region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta]);
+  const visiblePlaces = useMemo(() => samplePlacesForRegion(rawPlaces, region), [
+    rawPlaces,
+    region.latitude,
+    region.longitude,
+    region.latitudeDelta,
+    region.longitudeDelta,
+    samplePlacesForRegion,
+  ]);
 
   // Debounced autocomplete tied to the search bar
   useEffect(() => {
@@ -847,8 +918,8 @@ export default function MapScreen() {
               ];
             const lonRaw = parseFloat(coords?.[0]);
             const latRaw = parseFloat(coords?.[1]);
-            const lon = isNaN(lonRaw) ? Number.NaN : lonRaw;
-            const lat = isNaN(latRaw) ? Number.NaN : latRaw;
+            const lon = isValidLongitude(lonRaw) ? lonRaw : Number.NaN;
+            const lat = isValidLatitude(latRaw) ? latRaw : Number.NaN;
 
             const base: Place = {
               id:
@@ -973,10 +1044,12 @@ export default function MapScreen() {
       }
     })();
     await fetchReviews(place.id, { page: 1, append: false });
+    slideAnimValueRef.current = SNAP_POINTS.HALF;
     Animated.spring(slideAnim, { toValue: SNAP_POINTS.HALF, useNativeDriver: false }).start();
   };
 
   const closeDetails = () => {
+    slideAnimValueRef.current = SNAP_POINTS.CLOSED;
     Animated.spring(slideAnim, { toValue: SNAP_POINTS.CLOSED, useNativeDriver: false }).start(() => {
       setSelectedPlace(null);
       setReviews([]);
@@ -1123,10 +1196,10 @@ export default function MapScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        initialRegion={initialRegion}
-        onRegionChangeComplete={(r) => setRegion(r)}
+        initialRegion={DEFAULT_REGION}
+        onRegionChangeComplete={handleRegionChangeComplete}
       >
-        {places.map((place) => (
+        {visiblePlaces.filter(placeHasValidCoords).map((place) => (
           <Marker
             key={String(place.id ?? `${place.latitude},${place.longitude}`)}
             coordinate={{ latitude: place.latitude, longitude: place.longitude }}
@@ -1141,7 +1214,7 @@ export default function MapScreen() {
 
         {/* Ensure the currently selected place is always visible as a marker */}
         {placeHasValidCoords(selectedPlace) &&
-          !placeIncluded(places, selectedPlace) && (
+          !placeIncluded(visiblePlaces, selectedPlace) && (
             <Marker
               key={`selected-${String(selectedPlace.id ?? `${selectedPlace.latitude},${selectedPlace.longitude}`)}`}
               coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
@@ -1196,17 +1269,7 @@ export default function MapScreen() {
                     setSearch("");
                     Keyboard.dismiss();
                     const resolved = await resolvePlaceWithCoords(item);
-                    if (placeHasValidCoords(resolved)) {
-                      mapRef.current?.animateToRegion(
-                        {
-                          latitude: resolved.latitude,
-                          longitude: resolved.longitude,
-                          latitudeDelta: 0.01,
-                          longitudeDelta: 0.01,
-                        },
-                        800
-                      );
-                    }
+                    focusMapOnPlace(resolved);
                     openPlaceDetails(resolved);
                   }}
                 >
@@ -1379,17 +1442,7 @@ export default function MapScreen() {
                 onPress={async () => {
                   setShowListModal(false);
                   const resolved = await resolvePlaceWithCoords(item);
-                  if (placeHasValidCoords(resolved)) {
-                    mapRef.current?.animateToRegion(
-                      {
-                        latitude: resolved.latitude,
-                        longitude: resolved.longitude,
-                        latitudeDelta: 0.01,
-                        longitudeDelta: 0.01,
-                      },
-                      800
-                    );
-                  }
+                  focusMapOnPlace(resolved);
                   openPlaceDetails(resolved);
                 }}
               >
@@ -1425,7 +1478,9 @@ export default function MapScreen() {
             <Text style={styles.imageCloseText}>Close</Text>
           </TouchableOpacity>
           <FlatList
-            ref={(r) => (imageViewerRef.current = r)}
+            ref={(r) => {
+              imageViewerRef.current = r;
+            }}
             data={placeImages}
             keyExtractor={(uri, idx) => `${uri}-${idx}`}
             horizontal

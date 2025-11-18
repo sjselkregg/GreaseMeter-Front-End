@@ -494,7 +494,9 @@ export default function Bookmarks() {
                     <Text style={styles.imageCloseText}>Close</Text>
                   </TouchableOpacity>
                   <FlatList
-                    ref={(r) => (imageViewerRef.current = r)}
+                    ref={(r) => {
+                      imageViewerRef.current = r;
+                    }}
                     data={bookmarkImages}
                     keyExtractor={(uri, idx) => `${uri}-${idx}`}
                     horizontal
