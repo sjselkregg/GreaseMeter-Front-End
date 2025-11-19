@@ -88,8 +88,8 @@ export default function Account() {
       Alert.alert("Sign Up Error", "Please enter a valid email address.");
       return;
     }
-    if (trimmedPassword.length < 8) {
-      Alert.alert("Sign Up Error", "Password must be at least 8 characters.");
+    if (trimmedPassword.length < 12) {
+      Alert.alert("Sign Up Error", "Password must be at least 12 characters.");
       return;
     }
 
