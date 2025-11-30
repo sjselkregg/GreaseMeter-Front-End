@@ -110,14 +110,14 @@ export default function Bookmarks() {
     return Array.from(new Set(urls));
   };
 
-  // Fetch bookmarks
+  //Fetch bookmarks for authenticated user
   const fetchBookmarks = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
       const logged = Boolean(token);
       setIsLoggedIn(logged);
       if (!logged) {
-        // Clear any previously loaded bookmarks when logged out
+        //Clear any previously loaded bookmarks when logged out
         setBookmarks([]);
         setSelectedBookmark(null);
         setReviews([]);
@@ -154,7 +154,7 @@ export default function Bookmarks() {
     }
   }, []);
 
-  // Delete bookmark
+  //Delete bookmark and update list
   const handleDeleteBookmark = async (bookmarkId: number) => {
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -186,7 +186,7 @@ export default function Bookmarks() {
     }
   };
 
-  // Fetch reviews for a specific place
+  //Load reviews for a specific place
   const fetchReviews = async (
     placeId?: number | string | null,
     opts?: { page?: number; append?: boolean }
@@ -273,7 +273,7 @@ export default function Bookmarks() {
     }
   };
 
-  // Open bookmark details modal
+  //Open bookmark details modal with images/reviews primed
   const openBookmarkDetails = async (bookmark: Bookmark) => {
     setSelectedBookmark(bookmark);
     const placeId = bookmark.place_id ?? bookmark.placeId ?? bookmark.id;
@@ -328,7 +328,7 @@ export default function Bookmarks() {
   }, [imageViewerVisible, imageViewerIndex, screenWidth, bookmarkImages.length]);
 
 
-  // Pull-to-refresh
+  //Refresh bookmarks via pull-to-refresh
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchBookmarks();
@@ -339,14 +339,14 @@ export default function Bookmarks() {
     fetchBookmarks();
   }, [fetchBookmarks]);
 
-  // Also refresh when the screen regains focus (e.g., after logout/login)
+  //Re-sync when the screen regains focus (e.g., after logout/login)
   useFocusEffect(
     useCallback(() => {
       fetchBookmarks();
     }, [fetchBookmarks])
   );
 
-  // Submit recommendation
+  //Submit recommendation
   const handleSubmitRecommendation = async () => {
     const name = recName.trim();
     const address = recAddress.trim();

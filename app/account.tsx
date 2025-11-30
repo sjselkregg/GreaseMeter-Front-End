@@ -56,7 +56,7 @@ export default function Account() {
 
   const API_BASE = "https://api.greasemeter.live/v1";
 
-  // On app start, ensure no one is signed in
+  //Reset stored auth so the account screen always starts logged out
   useEffect(() => {
     (async () => {
       try {
@@ -67,7 +67,7 @@ export default function Account() {
     })();
   }, []);
 
-  // Respect incoming mode from navigation params (e.g., open login form)
+  //Apply incoming mode from deep links or navigation params
   useEffect(() => {
     const m = (params?.mode || "").toString().toLowerCase();
     if (m === "login") setMode("login");
@@ -146,7 +146,7 @@ export default function Account() {
     }
   };
 
-  //login
+  //Log in
   const handleLogin = async () => {
     const trimmedName = username.trim();
     const trimmedPassword = password.trim();
@@ -200,7 +200,7 @@ export default function Account() {
     }
   };
 
-  //logout
+  //Log out
   const handleLogout = async () => {
     try {
       await AsyncStorage.removeItem("userToken");
@@ -211,7 +211,7 @@ export default function Account() {
     }
   };
 
-  // forgot password
+  //Submit forgot-password request
   const handleForgotPassword = async () => {
     const emailToSend = (forgotEmail || email).trim();
     if (!emailToSend || !emailToSend.includes("@") || !emailToSend.includes(".")) {
@@ -243,7 +243,7 @@ export default function Account() {
     }
   };
 
-  // Submit recommendation
+  //Submit recommendation
   const handleSubmitRecommendation = async () => {
     const name = recName.trim();
     const address = recAddress.trim();
@@ -289,7 +289,7 @@ export default function Account() {
     }
   };
 
-  //get my reviews
+  //Load paginated user reviews
   const fetchUserReviews = useCallback(async (page = 1) => {
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -332,7 +332,7 @@ export default function Account() {
         const pid =
           r?.place_id ?? r?.placeId ?? r?.place?.id ?? r?.gm_place_id ?? r?.google_place_id ?? r?.placeID;
         const pname =
-          // According to curl.txt, user reviews return { id, name (place name), rating, text, time }
+          //According to curl.txt, user reviews return { id, name (place name), rating, text, time }
           r?.name ?? r?.place_name ?? r?.placeName ?? r?.place_title ?? r?.place?.name ?? r?.place?.title ?? undefined;
         return {
           id: r?.id ?? i,
@@ -349,7 +349,7 @@ export default function Account() {
 
       setUserReviewsMore(Boolean((data && data.more === true) || (data?.data && data.data.more === true)));
       setUserReviewsPage(page);
-      // Try to enrich missing place names in the background
+      //Try to enrich missing place names in the background
       try { await enrichReviewPlaces(mapped); } catch {}
     } catch (err) {
       console.error("Error fetching reviews:", err);
@@ -357,9 +357,9 @@ export default function Account() {
     }
   }, []);
 
-  // No email fetching post-login
+  //No email fetching post-login
 
-  // Enrich reviews with place names if missing
+  //Enrich reviews with place names if missing
   const enrichReviewPlaces = useCallback(async (list: Review[]) => {
     const candidates = (list || []).filter(Boolean).slice(0, 40);
     for (const r of candidates) {
@@ -392,7 +392,7 @@ export default function Account() {
   }, [API_BASE]);
 
 
-  //delete a review
+  //Delete a review
 const handleDeleteReview = async (reviewId: number | string) => {
   Alert.alert("Confirm Deletion", "Are you sure you want to delete this review?", [
     { text: "Cancel", style: "cancel" },
@@ -427,7 +427,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
             return;
           }
 
-          // remove deleted review from state
+          //Remove deleted review from state
           setReviews((prev) => prev.filter((r) => r.id !== reviewId));
           Alert.alert("Success", "Your review has been deleted.");
         } catch (err) {
@@ -440,7 +440,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
 };
 
 
-  //refresh reviews
+  //Refresh reviews
   const onRefresh = async () => {
     setRefreshing(true);
     setUserReviewsPage(1);
@@ -449,7 +449,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
     setRefreshing(false);
   };
 
-  //delete account
+  //Delete account
   const handleDeleteAccount = async () => {
     Alert.alert("Confirm Deletion", "Are you sure you want to delete your account?", [
       { text: "Cancel", style: "cancel" },
@@ -492,7 +492,7 @@ const handleDeleteReview = async (reviewId: number | string) => {
     ]);
   };
 
-  //the app interface
+  //Render account interface
   return (
     <View style={styles.container}>
       {loggedInUser ? (
@@ -786,7 +786,7 @@ deleteButtonText: {
   fontSize: 14,
 },
 
-  // overlay styles for small modals
+  //Overlay styles for small modals
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",

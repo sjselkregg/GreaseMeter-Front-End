@@ -37,7 +37,7 @@ type Review = {
   id: number | string;
   text: string;
   rating: number;
-  name?: string; // review author's username
+  name?: string; //review author's username
   relativeTime?: string;
 };
 
@@ -151,7 +151,7 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
   const [rawPlaces, setRawPlaces] = useState<Place[]>([]);
-  // Dedicated list view state (server-backed)
+  //Dedicated list view state (server-backed)
   const [listPlaces, setListPlaces] = useState<Place[]>([]);
   const [listPage, setListPage] = useState(1);
   const [listHasMore, setListHasMore] = useState(true);
@@ -286,6 +286,7 @@ const extractImageUrls = (payload: any): string[] => {
   return Array.from(new Set(urls));
 };
 
+  //Cache merged place metadata to keep map, list, and suggestions in sync
   const applyPlacePatch = (placeId: Place["id"], patch: Partial<Place>) => {
     if (!placeId || !patch) return;
     const { origin: _origin, ...rest } = patch;
@@ -500,7 +501,7 @@ const extractImageUrls = (payload: any): string[] => {
     })
   ).current;
 
-  // Fetch places
+  //Fetch places for the visible map region
   const fetchPlaces = useCallback(async () => {
     const requestId = ++placeFetchIdRef.current;
     const regionSnapshot = regionRef.current ?? DEFAULT_REGION;
@@ -508,7 +509,7 @@ const extractImageUrls = (payload: any): string[] => {
       const url = `https://api.greasemeter.live/v1/places/map?lat=${regionSnapshot.latitude}&lng=${regionSnapshot.longitude}&latDelta=${regionSnapshot.latitudeDelta}&lngDelta=${regionSnapshot.longitudeDelta}`;
       const res = await fetch(url);
       const data = await res.json();
-      // Normalize possible API shapes into an array
+      //Normalize possible API shapes into an array
       const candidates = [
         Array.isArray(data) ? data : undefined,
         data?.items,
@@ -557,14 +558,14 @@ const extractImageUrls = (payload: any): string[] => {
       mergePlacesIntoCache(mapped, regionSnapshot);
       if (!isMountedRef.current || placeFetchIdRef.current !== requestId) return;
       updateRawPlacesForRegion(regionSnapshot);
-      // Enrich names/addresses asynchronously for list view
+      //Enrich names/addresses asynchronously for list view
       enrichPlacesMeta(mapped);
     } catch (err) {
       console.error("Failed to fetch places:", err);
     }
   }, [mergePlacesIntoCache, updateRawPlacesForRegion]);
 
-  // Fetch list view results from server (paginated)
+  //Fetch list view results from server (paginated)
   const fetchListPlaces = async (opts?: { reset?: boolean; pageSize?: number }) => {
     const reset = Boolean(opts?.reset);
     const limit = Math.max(1, Math.min(50, opts?.pageSize ?? 20));
@@ -618,12 +619,12 @@ const extractImageUrls = (payload: any): string[] => {
             rating: parseFloat(p.avg_rating ?? p.rating ?? 0) || 0,
             origin: "list",
           };
-          // Merge any cached meta immediately for better list UX
+          //Merge any cached meta immediately for better list UX
           const cached = metaCacheRef.current.get(base.id);
           return cached ? { ...base, ...cached } : base;
         }) as Place[];
 
-      // Fallback: if list endpoint returns nothing, try map endpoint once per reset
+      //Fallback: if list endpoint returns nothing, try map endpoint once per reset
       if ((!mapped || mapped.length === 0) && reset) {
         try {
           const mapUrl = `https://api.greasemeter.live/v1/places/map?lat=${region.latitude}&lng=${region.longitude}&latDelta=${region.latitudeDelta}&lngDelta=${region.longitudeDelta}`;
@@ -667,17 +668,17 @@ const extractImageUrls = (payload: any): string[] => {
               const cached = metaCacheRef.current.get(base.id);
               return cached ? { ...base, ...cached } : base;
             }) as Place[];
-          // Since map endpoint isn't paginated the same way, assume no more
+          //Since map endpoint isn't paginated the same way, assume no more
           setListHasMore(false);
         } catch (e) {
-          // ignore
+          //ignore
         }
       }
 
       if (reset) setListPlaces(mapped);
       else setListPlaces((prev) => [...prev, ...mapped]);
 
-      // hasMore: prefer explicit flag if present
+      //hasMore: prefer explicit flag if present
       const moreFlag = Boolean(
         (data && data.more === true) ||
           (data?.data && data.data.more === true) ||
@@ -688,7 +689,7 @@ const extractImageUrls = (payload: any): string[] => {
       }
       setListPage(nextPage + 1);
 
-      // Opportunistically enrich metadata for visible list items
+      //Opportunistically enrich metadata for visible list items
       enrichPlacesMeta(mapped);
     } catch (err) {
       console.error("Failed to fetch list places:", err);
@@ -700,19 +701,19 @@ const extractImageUrls = (payload: any): string[] => {
     }
   };
 
-  // Ensure list view loads when modal opens (onShow can be unreliable on some platforms)
+  //Ensure list view loads when modal opens (onShow can be unreliable on some platforms)
   useEffect(() => {
     if (!showListModal) return;
     setListPage(1);
     setListHasMore(true);
     setListPlaces([]);
     fetchListPlaces({ reset: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    //eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showListModal]);
 
-  // Fetch detail data for map markers lacking readable name/address
+  //Fetch detail data for map markers lacking readable name/address
   const enrichPlacesMeta = async (list: Place[]) => {
-    const candidates = list.slice(0, META_PREFETCH_LIMIT); // cap to avoid overfetching
+    const candidates = list.slice(0, META_PREFETCH_LIMIT); //cap to avoid overfetching
     const pending: Promise<void>[] = [];
     const flush = async () => {
       if (!pending.length) return;
@@ -736,7 +737,7 @@ const extractImageUrls = (payload: any): string[] => {
             applyPlacePatch(p.id, details.patch);
           }
         } catch {
-          // ignore individual fetch failures
+          //ignore individual fetch failures
         } finally {
           metaInFlightRef.current.delete(p.id);
         }
@@ -749,7 +750,7 @@ const extractImageUrls = (payload: any): string[] => {
     await flush();
   };
 
-  // Resolve coordinates for a place when missing
+  //Resolve coordinates for a place when missing
   const resolvePlaceWithCoords = async (place: Place): Promise<Place> => {
     const hasCoords = isValidLatitude(place.latitude) && isValidLongitude(place.longitude);
     if (hasCoords) return place;
@@ -771,10 +772,10 @@ const extractImageUrls = (payload: any): string[] => {
           applyPlacePatch(place.id, detail.patch);
         }
       } catch {
-        // ignore and fall through to geocode
+        //ignore and fall through to geocode
       }
     }
-    // Fallback: geocode by address if still missing
+    //Fallback: geocode by address if still missing
     if (!isValidLatitude(lat) || !isValidLongitude(lon)) {
       const addr = (place.address || "").trim();
       const query = addr || `${place.name || ""}`.trim();
@@ -829,7 +830,7 @@ const extractImageUrls = (payload: any): string[] => {
     };
   }, [fetchPlaces]);
 
-  // Debounce fetch on region changes
+  //Debounce fetch on region changes
   const regionFetchTimeout = useRef<any>(null);
   useEffect(() => {
     if (regionFetchTimeout.current) clearTimeout(regionFetchTimeout.current);
@@ -841,7 +842,7 @@ const extractImageUrls = (payload: any): string[] => {
     };
   }, [region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta, fetchPlaces]);
 
-  // Sample markers to avoid clutter when zoomed out
+  //Sample markers to avoid clutter when zoomed out
   const samplePlacesForRegion = useCallback((all: Place[], r: Region): Place[] => {
     if (!all?.length) return [];
     const latDelta = Math.max(r.latitudeDelta, 0.0005);
@@ -878,9 +879,9 @@ const extractImageUrls = (payload: any): string[] => {
     return result;
   }, []);
 
-  // helper not needed after reverting selected marker badge
+  //Helper not needed after reverting selected marker badge
 
-  // Check if a given place is already present in the sampled list
+  //Check if a given place is already present in the sampled list
   const placeIncluded = (list: Place[], p?: Place | null): boolean => {
     if (!p) return true;
     const pid = p.id;
@@ -888,7 +889,7 @@ const extractImageUrls = (payload: any): string[] => {
     const lon = p.longitude;
     for (const it of list) {
       if (pid != null && it.id === pid) return true;
-      // If no reliable id, compare coordinates approximately
+      //If no reliable id, compare coordinates approximately
       if (
         isValidLatitude(lat) &&
         isValidLongitude(lon) &&
@@ -912,14 +913,14 @@ const extractImageUrls = (payload: any): string[] => {
     samplePlacesForRegion,
   ]);
 
-  // Debounced autocomplete tied to the search bar
+  //Debounced autocomplete tied to the search bar
   useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
     const term = search.trim();
-    // Start suggesting from first character typed
+    //Start suggesting from first character typed
     if (term.length < 1) {
       setSuggestions([]);
       return;
@@ -944,7 +945,7 @@ const extractImageUrls = (payload: any): string[] => {
         const items = (candidates.find((c) => Array.isArray(c)) ?? []) as any[];
         const mapped: Place[] = items
           .map((p: any) => {
-            // API may only return id, name, address for search; fall back coords to current region center
+            //API may only return id, name, address for search; fall back coords to current region center
             const coords =
               p.point?.coordinates ??
               p.geometry?.coordinates ??
@@ -998,7 +999,7 @@ const extractImageUrls = (payload: any): string[] => {
     };
   }, [search, region.latitude, region.longitude]);
 
-  // Fetch reviews for a place
+  //Fetch reviews for a place
   const fetchReviews = async (
     placeId: number | string,
     opts?: { page?: number; append?: boolean }
@@ -1019,7 +1020,7 @@ const extractImageUrls = (payload: any): string[] => {
         }
       );
       const data = await res.json();
-      // Normalize possible API shapes into an array
+      //Normalize possible API shapes into an array
       const candidates = [
         data?.items,
         data?.data,
@@ -1057,13 +1058,13 @@ const extractImageUrls = (payload: any): string[] => {
 
   const openPlaceDetails = async (place: Place) => {
     setSuggestions([]);
-    // Set selected with current info, then enrich with meta
+    //Set selected with current info, then enrich with meta
     setSelectedPlace(place);
     setPlaceImages(place.images ?? []);
     setReviewPage(1);
     setReviewHasMore(false);
     setReviewLoadingMore(false);
-    // Fetch the appropriate detail bundle for the selected place
+    //Fetch the appropriate detail bundle for the selected place
     (async () => {
       try {
         const details = await fetchPlaceDetails(place);
@@ -1163,7 +1164,7 @@ const extractImageUrls = (payload: any): string[] => {
         Alert.alert("Error", "Failed to submit review.");
         return;
       }
-      // Try to optimistically show the created review if returned
+      //Try to optimistically show the created review if returned
       try {
         const created = await res.json();
         const r = created?.data ?? created;
