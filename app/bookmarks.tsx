@@ -58,6 +58,57 @@ export default function Bookmarks() {
   const imageViewerRef = useRef<FlatList<string> | null>(null);
 
   const API_BASE = "https://api.greasemeter.live/v1";
+  const API_HOST = API_BASE.replace(/\/v1$/, "");
+
+  const normalizeImageUrl = (url?: string | null): string | null => {
+    if (typeof url !== "string") return null;
+    const trimmed = url.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("data:")) return trimmed;
+    if (trimmed.startsWith("//")) return `https:${trimmed}`;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `${API_HOST}${trimmed.startsWith("/") ? "" : "/"}${trimmed}`;
+  };
+
+  const extractImageUrls = (payload: any): string[] => {
+    const candidates = [
+      Array.isArray(payload?.images) ? payload.images : undefined,
+      Array.isArray(payload?.imageUrls) ? payload.imageUrls : undefined,
+      Array.isArray(payload?.image_urls) ? payload.image_urls : undefined,
+      Array.isArray(payload?.photos) ? payload.photos : undefined,
+      Array.isArray(payload?.media) ? payload.media : undefined,
+      Array.isArray(payload?.gallery) ? payload.gallery : undefined,
+      Array.isArray(payload?.data?.images) ? payload.data.images : undefined,
+      Array.isArray(payload?.data?.imageUrls) ? payload.data.imageUrls : undefined,
+      Array.isArray(payload?.data?.image_urls) ? payload.data.image_urls : undefined,
+      Array.isArray(payload?.items) ? payload.items : undefined,
+      Array.isArray(payload?.data) ? payload.data : undefined,
+      Array.isArray(payload) ? payload : undefined,
+    ];
+    const arr = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
+    const urls = arr
+      .map((it) => {
+        if (typeof it === "string") return it;
+        return (
+          it?.url ??
+          it?.src ??
+          it?.image ??
+          it?.link ??
+          it?.photo_url ??
+          it?.photoUrl ??
+          it?.image_url ??
+          it?.imageUrl ??
+          it?.signed_url ??
+          it?.signedUrl ??
+          it?.download_url ??
+          it?.downloadUrl ??
+          null
+        );
+      })
+      .map((u) => normalizeImageUrl(u))
+      .filter((u): u is string => typeof u === "string" && !!u);
+    return Array.from(new Set(urls));
+  };
 
   // Fetch bookmarks
   const fetchBookmarks = useCallback(async () => {
@@ -215,18 +266,7 @@ export default function Bookmarks() {
       }
       const payload = await res.json();
       const data = payload?.data ?? payload;
-      const candidates = [
-        Array.isArray(data?.images) ? data.images : undefined,
-        Array.isArray(data?.items) ? data.items : undefined,
-        Array.isArray(data?.data) ? data.data : undefined,
-      ];
-      const arr = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
-      const urls = arr
-        .map((img) =>
-          typeof img === "string" ? img : img?.url ?? img?.src ?? img?.image ?? img?.link ?? null
-        )
-        .filter((u): u is string => typeof u === "string" && !!u);
-      setBookmarkImages(urls);
+      setBookmarkImages(extractImageUrls(data));
     } catch (err) {
       console.warn("Failed to fetch bookmark images:", err);
       setBookmarkImages([]);

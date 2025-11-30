@@ -234,21 +234,57 @@ export default function MapScreen() {
     }
   };
 
-  const extractImageUrls = (payload: any): string[] => {
-    const candidates = [
-      Array.isArray(payload?.images) ? payload.images : undefined,
-      Array.isArray(payload?.data?.images) ? payload.data.images : undefined,
-      Array.isArray(payload?.items) ? payload.items : undefined,
-      Array.isArray(payload?.data) ? payload.data : undefined,
-      Array.isArray(payload) ? payload : undefined,
-    ];
-    const arr = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
-    return arr
-      .map((it) =>
-        typeof it === "string" ? it : it?.url ?? it?.src ?? it?.image ?? it?.link ?? null
-      )
-      .filter((u): u is string => typeof u === "string" && !!u);
-  };
+const API_HOST = API_BASE.replace(/\/v1$/, "");
+
+const normalizeImageUrl = (url?: string | null): string | null => {
+  if (typeof url !== "string") return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("data:")) return trimmed;
+  if (trimmed.startsWith("//")) return `https:${trimmed}`;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `${API_HOST}${trimmed.startsWith("/") ? "" : "/"}${trimmed}`;
+};
+
+const extractImageUrls = (payload: any): string[] => {
+  const candidates = [
+    Array.isArray(payload?.images) ? payload.images : undefined,
+    Array.isArray(payload?.imageUrls) ? payload.imageUrls : undefined,
+    Array.isArray(payload?.image_urls) ? payload.image_urls : undefined,
+    Array.isArray(payload?.photos) ? payload.photos : undefined,
+    Array.isArray(payload?.media) ? payload.media : undefined,
+    Array.isArray(payload?.gallery) ? payload.gallery : undefined,
+    Array.isArray(payload?.data?.images) ? payload.data.images : undefined,
+    Array.isArray(payload?.data?.imageUrls) ? payload.data.imageUrls : undefined,
+    Array.isArray(payload?.data?.image_urls) ? payload.data.image_urls : undefined,
+    Array.isArray(payload?.items) ? payload.items : undefined,
+    Array.isArray(payload?.data) ? payload.data : undefined,
+    Array.isArray(payload) ? payload : undefined,
+  ];
+  const arr = (candidates.find((c) => Array.isArray(c)) as any[]) ?? [];
+  const urls = arr
+    .map((it) => {
+      if (typeof it === "string") return it;
+      return (
+        it?.url ??
+        it?.src ??
+        it?.image ??
+        it?.link ??
+        it?.photo_url ??
+        it?.photoUrl ??
+        it?.image_url ??
+        it?.imageUrl ??
+        it?.signed_url ??
+        it?.signedUrl ??
+        it?.download_url ??
+        it?.downloadUrl ??
+        null
+      );
+    })
+    .map((u) => normalizeImageUrl(u))
+    .filter((u): u is string => typeof u === "string" && !!u);
+  return Array.from(new Set(urls));
+};
 
   const applyPlacePatch = (placeId: Place["id"], patch: Partial<Place>) => {
     if (!placeId || !patch) return;
